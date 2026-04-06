@@ -13,6 +13,26 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import axios from 'axios';
 
+// Helper to generate appsecret_proof for the Graph API security requirement
+async function generateAppSecretProof(accessToken: string, appSecret: string) {
+  const enc = new TextEncoder();
+  const key = await window.crypto.subtle.importKey(
+    "raw",
+    enc.encode(appSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await window.crypto.subtle.sign(
+    "HMAC",
+    key,
+    enc.encode(accessToken)
+  );
+  return Array.from(new Uint8Array(signature))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 interface ReportsViewProps {
   branches: Branch[];
   companies: Company[];
@@ -199,11 +219,14 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
   const fetchBranchInsights = async (branch: Branch, start: string, end: string) => {
     const token = branch.facebook_access_token || settings.facebook_access_token;
     const accountIdString = branch.facebook_ad_account_id;
+    const appSecret = import.meta.env.VITE_FACEBOOK_APP_SECRET;
     
-    if (!token || !accountIdString) return;
+    if (!token || !accountIdString || !appSecret) return;
 
     setIsFetchingFacebook(true);
     try {
+      const appSecretProof = await generateAppSecretProof(token, appSecret);
+      
       const accountIds = accountIdString.split(',').map(id => {
         const trimmed = id.trim().replace('act_', '');
         return trimmed.split('|')[0];
@@ -218,14 +241,15 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
 
       for (const accountId of accountIds) {
         try {
-          const insightsRes = await axios.get(`https://graph.facebook.com/v22.0/act_${accountId}/insights`, {
-            headers: { Authorization: `Bearer ${token}` },
-            params: {
-              time_range: JSON.stringify({ since: start, until: end }),
-              fields: 'campaign_name,reach,impressions,clicks,spend,actions',
-              level: 'campaign'
-            }
-          });
+            const insightsRes = await axios.get(`https://graph.facebook.com/v22.0/act_${accountId}/insights`, {
+              params: {
+                access_token: token,
+                appsecret_proof: appSecretProof,
+                time_range: JSON.stringify({ since: start, until: end }),
+                fields: 'campaign_name,reach,impressions,clicks,spend,actions',
+                level: 'campaign'
+              }
+            });
           
           const data = insightsRes.data.data;
           if (data && data.length > 0) {
@@ -376,6 +400,11 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
         let totalLeads = 0;
 
         if (branch.facebook_access_token && branch.facebook_ad_account_id) {
+          const appSecret = import.meta.env.VITE_FACEBOOK_APP_SECRET;
+          if (!appSecret) continue;
+          
+          const appSecretProof = await generateAppSecretProof(branch.facebook_access_token, appSecret);
+
           const accountIds = branch.facebook_ad_account_id.split(',').map(id => {
             const trimmed = id.trim().replace('act_', '');
             return trimmed.split('|')[0];
@@ -383,8 +412,9 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
           for (const accountId of accountIds) {
             try {
               const insightsRes = await axios.get(`https://graph.facebook.com/v22.0/act_${accountId}/insights`, {
-                headers: { Authorization: `Bearer ${branch.facebook_access_token}` },
                 params: {
+                  access_token: branch.facebook_access_token,
+                  appsecret_proof: appSecretProof,
                   time_range: JSON.stringify({ since: globalStart, until: globalEnd }),
                   fields: 'reach,impressions,clicks,spend,actions'
                 }
@@ -748,6 +778,16 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
                       ) : (
                         <Badge variant="warning" className="whitespace-nowrap w-fit"><span className="hidden sm:inline">Sem WhatsApp</span><span className="sm:hidden">Sem WPP</span></Badge>
                       )}
+
+                      <div className="flex flex-col gap-1 mt-2">
+                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Saldo Atual Meta</p>
+                        <p className={cn(
+                          "text-sm font-black",
+                          (branch.balance || 0) > 50 ? "text-emerald-500" : "text-rose-500"
+                        )}>
+                          {formatCurrency(branch.balance || 0)}
+                        </p>
+                      </div>
                       
                       <button 
                         onClick={(e) => { e.stopPropagation(); handleOpenReportModal(branch); }}
