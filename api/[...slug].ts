@@ -232,31 +232,35 @@ async function syncBranchBalance(supabaseClient: any, branch: any) {
         const amountSpentVal = parseFloat(data.amount_spent || "0");
         const spendCapVal = parseFloat(data.spend_cap || "0");
         
+        const fundingBalance = data.funding_source_details?.balance ? parseFloat(data.funding_source_details.balance) : 0;
+        const totalPrepaid = totalPrepaidVal;
+        const rawBalance = balanceVal;
+        const spent = amountSpentVal;
+        const cap = spendCapVal;
+        
         let accountBalance = 0;
         
-        const fundingBalance = data.funding_source_details?.balance ? parseFloat(data.funding_source_details.balance) : 0;
-        const totalPrepaid = parseFloat(data.total_prepaid_balance || "0");
-        const rawBalance = parseFloat(data.balance || "0");
-        const spent = parseFloat(data.amount_spent || "0");
-        const cap = parseFloat(data.spend_cap || "0");
+        const isPrepaid = data.is_prepaid_account || (data.funding_source_details && data.funding_source_details.balance);
 
-        // Strategy: Prepaid accounts often have balance in funding_source_details or total_prepaid_balance
+        // Logic Refinement: 
         if (fundingBalance !== 0) {
-          accountBalance = fundingBalance / 100;
+          accountBalance = Math.abs(fundingBalance) / 100;
         } else if (totalPrepaid !== 0) {
-          accountBalance = totalPrepaid / 100;
-        } else if (rawBalance > 0) {
-          // If balance is positive, it's usually prepaid available funds
-          accountBalance = rawBalance / 100;
-        } else if (cap > 0) {
-          // Postpaid with spend cap
-          accountBalance = Math.max(0, (cap - spent) / 100);
+          accountBalance = Math.abs(totalPrepaid) / 100;
+        } else if (isPrepaid && rawBalance !== 0) {
+          accountBalance = Math.abs(rawBalance) / 100;
         } else if (rawBalance < 0) {
-          // Debt
-          accountBalance = rawBalance / 100;
+          // Even if not explicitly marked prepaid, a negative balance is always a credit (available funds)
+          accountBalance = Math.abs(rawBalance) / 100;
+        } else if (cap > 0) {
+          // Standard Postpaid
+          accountBalance = Math.max(0, (cap - spent) / 100);
+        } else {
+          // Default to negative rawBalance (debt) if nothing else applies
+          accountBalance = -rawBalance / 100;
         }
         
-        console.log(`[DEBUG] Final Calc for ${data.id}: FB_Balance=${rawBalance}, FB_Prepaid=${totalPrepaid}, FB_Funding=${fundingBalance}. Result: ${accountBalance}`);
+        console.log(`[DEBUG_DETAILED] Account ${data.id}: isPrepaid=${!!isPrepaid}, raw=${rawBalance}, prepaid=${totalPrepaid}, funding=${fundingBalance}. Calculated: ${accountBalance}`);
         totalBalance += accountBalance;
       } catch (err: any) {
         console.error(`Erro ao buscar conta ${accountId}:`, err.message);
