@@ -267,8 +267,55 @@ async function syncBranchBalance(supabaseClient: any, branch: any) {
       .eq('id', branch.id);
       
     console.log(`Saldo atualizado para filial ${branch.id}: ${totalBalance}`);
+
+    // --- SYNC CAMPAIGNS ---
+    console.log(`Puxando campanhas para filial ${branch.id}...`);
+    let allCampaigns: any[] = [];
+    await Promise.all(adAccountIds.map(async (accountId: string) => {
+      try {
+        const cleanId = accountId.replace('act_', '');
+        const campsRes = await axiosWithRetry(() => axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}/campaigns`, {
+          headers: { Authorization: `Bearer ${tokenToUse}` },
+          params: { 
+            fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,objective,start_time',
+            appsecret_proof: getAppSecretProof(tokenToUse)
+          }
+        }));
+        
+        const camps = campsRes.data.data || [];
+        camps.forEach((c: any) => {
+          allCampaigns.push({
+            branch_id: branch.id,
+            name: c.name,
+            spend: parseFloat(c.daily_budget || "0") / 100,
+            status: c.status?.toLowerCase() === 'active' ? 'active' : 'paused',
+            purpose: (c.objective?.toLowerCase() === 'outcome_sales' || c.objective?.toLowerCase() === 'sales') ? 'vendas' : 'leads',
+            created_at: c.start_time || new Date().toISOString(),
+            meta_campaign_id: c.id
+          });
+        });
+      } catch (err: any) {
+        console.error(`Erro ao buscar campanhas da conta ${accountId}:`, err.message);
+      }
+    }));
+
+    if (allCampaigns.length > 0) {
+      // Delete old campaigns for this branch to avoid duplicates/stale data
+      await supabaseClient
+        .from('campaigns')
+        .delete()
+        .eq('branch_id', branch.id);
+      
+      // Insert new ones from Facebook
+      await supabaseClient
+        .from('campaigns')
+        .insert(allCampaigns);
+      
+      console.log(`${allCampaigns.length} campanhas sincronizadas para filial ${branch.id}`);
+    }
+
   } catch (err: any) {
-    console.error(`Erro ao sincronizar filial ${branch.id}:`, err.message, JSON.stringify(err));
+    console.error(`Erro ao sincronizar filial ${branch.id}:`, err.message);
   }
 }
 
