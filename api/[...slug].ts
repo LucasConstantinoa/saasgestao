@@ -262,8 +262,20 @@ async function syncBranchBalance(supabaseClient: any, branch: any) {
         
         console.log(`[DEBUG_DETAILED] Account ${data.id}: isPrepaid=${!!isPrepaid}, raw=${rawBalance}, prepaid=${totalPrepaid}, funding=${fundingBalance}. Calculated: ${accountBalance}`);
         totalBalance += accountBalance;
+
+        // DEBUG LEAK TO AUDIT LOG
+        await supabaseClient.from('audit_log').insert({
+          action: 'DEBUG_META_SYNC',
+          detail: `Filial ${branch.id} (${data.id}): balance=${rawBalance}, prepaid=${totalPrepaid}, funding=${fundingBalance}, isPrepaid=${!!isPrepaid}. Resp: ${JSON.stringify(data).substring(0, 1000)}`,
+          type: 'info'
+        });
       } catch (err: any) {
         console.error(`Erro ao buscar conta ${accountId}:`, err.message);
+        await supabaseClient.from('audit_log').insert({
+          action: 'DEBUG_META_ERROR',
+          detail: `Filial ${branch.id} (${accountId}): ${err.message}`,
+          type: 'error'
+        });
       }
     }));
 
