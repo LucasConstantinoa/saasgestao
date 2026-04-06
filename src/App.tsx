@@ -383,12 +383,8 @@ export default function App() {
     }
     setIsFetchingAccounts(true);
     try {
-      const response = await axios.get(`https://graph.facebook.com/v22.0/me/adaccounts`, {
-        headers: { Authorization: `Bearer ${token}` },
-        params: {
-          fields: 'name,account_id,id',
-          limit: 500
-        }
+      const response = await axios.get(`/api/facebook/ad-accounts`, {
+        params: { token }
       });
       
       const accounts = response.data.data.map((acc: any) => ({

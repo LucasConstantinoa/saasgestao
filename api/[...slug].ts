@@ -347,6 +347,28 @@ if (!process.env.VERCEL) {
   setInterval(syncAllBranchesBalances, 600000);
 }
 
+// Proxy for direct FB API calls with security signatures
+api.get("/facebook/ad-accounts", async (req, res) => {
+  try {
+    const token = req.query.token as string;
+    if (!token) return res.status(400).json({ error: "Token is required" });
+    
+    const response = await axios.get(`https://graph.facebook.com/v22.0/me/adaccounts`, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { 
+        fields: 'name,account_id,id',
+        limit: 500,
+        appsecret_proof: getAppSecretProof(token)
+      }
+    });
+    
+    res.json(response.data);
+  } catch (err: any) {
+    console.error("AdAccounts Proxy error:", err.message);
+    res.status(err.response?.status || 500).json(err.response?.data || { error: err.message });
+  }
+});
+
 // Trigger all branches sync
 api.all("/facebook/sync-all", (req, res, next) => {
   if (req.method === 'POST') return next();
