@@ -220,42 +220,42 @@ async function syncBranchBalance(supabaseClient: any, branch: any) {
         const accountRes = await axiosWithRetry(() => axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
           headers: { Authorization: `Bearer ${tokenToUse}` },
           params: { 
-            fields: 'balance,is_prepaid_account,funding_source_details,spend_cap,amount_spent,account_status',
+            fields: 'balance,is_prepaid_account,funding_source_details,spend_cap,amount_spent,account_status,total_prepaid_balance',
             appsecret_proof: getAppSecretProof(tokenToUse)
           }
         }));
         
         const data = accountRes.data;
-        console.log(`[DEBUG] Syncing branch ${branch.id}, account ${data.id}. Raw data:`, JSON.stringify(data));
-        
         const balanceVal = parseFloat(data.balance || "0");
+        const totalPrepaidVal = parseFloat(data.total_prepaid_balance || "0");
         const amountSpentVal = parseFloat(data.amount_spent || "0");
         const spendCapVal = parseFloat(data.spend_cap || "0");
         
-        const balance = isNaN(balanceVal) ? 0 : balanceVal / 100;
-        const amountSpent = isNaN(amountSpentVal) ? 0 : amountSpentVal / 100;
-        const spendCap = isNaN(spendCapVal) ? 0 : spendCapVal / 100;
-
         let accountBalance = 0;
-        const isPrepaid = data.is_prepaid_account || (data.funding_source_details && data.funding_source_details.balance);
         
-        if (isPrepaid) {
-          if (data.funding_source_details && data.funding_source_details.balance) {
-            const val = parseFloat(data.funding_source_details.balance);
-            accountBalance = isNaN(val) ? 0 : val / 100;
-          } else {
-            accountBalance = Math.max(0, balance);
-          }
-        } else {
-          // Postpaid: balance usually shows debt (positive). We want available = (cap - spent) OR (-debt)
-          if (data.spend_cap && data.spend_cap !== "0") {
-            accountBalance = Math.max(0, spendCap - amountSpent);
-          } else {
-            accountBalance = -balance;
-          }
+        // 1. Try funding_source_details (most reliable for prepaid)
+        if (data.funding_source_details && data.funding_source_details.balance) {
+          accountBalance = parseFloat(data.funding_source_details.balance) / 100;
+        } 
+        // 2. Try total_prepaid_balance
+        else if (totalPrepaidVal !== 0) {
+          accountBalance = totalPrepaidVal / 100;
+        }
+        // 3. Try standard balance
+        else if (balanceVal !== 0) {
+          // Meta API: balance is positive for prepaid available funds, negative for postpaid debt
+          accountBalance = balanceVal / 100;
         }
         
-        console.log(`[DEBUG] Syncing branch ${branch.id}, account ${data.id}. isPrepaid: ${!!isPrepaid}, rawBalance: ${balanceVal}, calculatedAccountBalance: ${accountBalance}`);
+        // 4. Fallback for Postpaid with Spend Cap
+        if (accountBalance <= 0 && spendCapVal > 0) {
+          accountBalance = (spendCapVal - amountSpentVal) / 100;
+        }
+
+        // Ensure we don't show negative balance as 0 if it's debt, or vice versa
+        // If it's a prepaid account and we have 0, but we see a positive balance elsewhere, use it.
+        
+        console.log(`[DEBUG] Branch ${branch.id}, Account ${data.id}: balance=${data.balance}, prepaid=${data.total_prepaid_balance}, funding=${data.funding_source_details?.balance}. Calculated: ${accountBalance}`);
         totalBalance += accountBalance;
       } catch (err: any) {
         console.error(`Erro ao buscar conta ${accountId}:`, err.message);
