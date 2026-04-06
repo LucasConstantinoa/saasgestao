@@ -8,6 +8,26 @@ import axios from 'axios';
 
 type Status = 'loading' | 'validating' | 'redirecting' | 'processing' | 'success' | 'error' | 'expired';
 
+// Helper to generate appsecret_proof for the Graph API security requirement
+async function generateAppSecretProof(accessToken: string, appSecret: string) {
+  const enc = new TextEncoder();
+  const key = await window.crypto.subtle.importKey(
+    "raw",
+    enc.encode(appSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await window.crypto.subtle.sign(
+    "HMAC",
+    key,
+    enc.encode(accessToken)
+  );
+  return Array.from(new Uint8Array(signature))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export const FacebookCallback: React.FC = () => {
   const { token: paramToken } = useParams<{ token: string }>();
   const [searchParams] = useSearchParams();
@@ -23,6 +43,14 @@ export const FacebookCallback: React.FC = () => {
 
   const facebookAppId = import.meta.env.VITE_FACEBOOK_APP_ID || '1477005707153295';
   const facebookAppSecret = import.meta.env.VITE_FACEBOOK_APP_SECRET || '';
+  
+  // LOG: Copy this URL to Meta Console -> 'Valid OAuth Redirect URIs'
+  useEffect(() => {
+    console.log('🔗 [OAUTH] Redirect URI being used:', `${window.location.origin}/facebook-callback`);
+    if (!facebookAppSecret) {
+      console.error('❌ [CONFIG] VITE_FACEBOOK_APP_SECRET is missing! Add it to .env.local and Vercel settings.');
+    }
+  }, [facebookAppSecret]);
   
   // The redirect URI must be a singular fixed string to match Facebook App configuration exactly
   const redirectUri = `${window.location.origin}/facebook-callback`;
@@ -102,6 +130,10 @@ export const FacebookCallback: React.FC = () => {
     setMessage('Conectando com o Facebook...');
 
     try {
+      if (!facebookAppSecret) {
+        throw new Error('CONFIG_ERROR: Meta App Secret is not defined in environment variables.');
+      }
+
       // 1. Exchange code for short-lived token
       const tokenResponse = await axios.post('https://graph.facebook.com/v22.0/oauth/access_token', null, {
         params: {
@@ -128,10 +160,17 @@ export const FacebookCallback: React.FC = () => {
       const longToken = longTokenResponse.data.access_token;
       const expiresIn = longTokenResponse.data.expires_in; // seconds
 
+      // 2.5 Generate appsecret_proof (required by some Meta App settings)
+      const appSecretProof = await generateAppSecretProof(longToken, facebookAppSecret);
+
       // 3. Get user profile
       setMessage('Buscando perfil do Facebook...');
       const profileResponse = await axios.get('https://graph.facebook.com/v22.0/me', {
-        params: { fields: 'id,name,email,picture.width(200)', access_token: longToken }
+        params: { 
+          fields: 'id,name,email,picture.width(200)', 
+          access_token: longToken,
+          appsecret_proof: appSecretProof
+        }
       });
 
       const profile = profileResponse.data;
@@ -142,6 +181,7 @@ export const FacebookCallback: React.FC = () => {
       const adAccountsResponse = await axios.get('https://graph.facebook.com/v22.0/me/adaccounts', {
         params: {
           access_token: longToken,
+          appsecret_proof: appSecretProof,
           fields: 'id,name,account_id,currency,account_status,balance,amount_spent',
           limit: 500
         }
@@ -233,7 +273,14 @@ export const FacebookCallback: React.FC = () => {
     } catch (err: any) {
       console.error('OAuth processing error:', err);
       setStatus('error');
-      setMessage(err.response?.data?.error?.message || 'Erro ao processar o login do Facebook.');
+      const errorMsg = err.response?.data?.error?.message || err.message;
+      if (errorMsg === 'Error validating client secret.') {
+        setMessage('Erro: "Secret" do Meta inválido ou ausente. Adicione VITE_FACEBOOK_APP_SECRET no Vercel.');
+      } else if (err.message?.includes('CONFIG_ERROR')) {
+        setMessage('Configuração Pendente: Chave VITE_FACEBOOK_APP_SECRET não encontrada.');
+      } else {
+        setMessage(errorMsg || 'Erro ao processar o login do Facebook.');
+      }
     }
   };
 
