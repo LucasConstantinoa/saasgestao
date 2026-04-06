@@ -56,16 +56,38 @@ export const BranchRealTimeDashboard: React.FC<{
     }
   };
 
+  const fetchData = async () => {
+    setLoading(true);
+    const { data, error } = await supabase.from('branches').select('*').eq('company_id', companyId);
+    if (error) console.error('Error fetching branches:', error);
+    else setBranches(data || []);
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      const { data, error } = await supabase.from('branches').select('*').eq('company_id', companyId);
-      if (error) console.error('Error fetching branches:', error);
-      else setBranches(data || []);
-      setLoading(false);
-    };
     fetchData();
   }, [companyId]);
+
+  const handleSyncAll = async () => {
+    setIsSyncing(true);
+    addToast('info', 'Sincronizando', 'Buscando saldos de todas as filiais...');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      
+      await axios.post('/api/facebook/sync-all', {}, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+      
+      await fetchData();
+      addToast('success', 'Sincronização Concluída', 'Todos os saldos foram atualizados.');
+    } catch (err) {
+      console.error('Error syncing all branches:', err);
+      addToast('error', 'Erro', 'Não foi possível sincronizar todas as filiais.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const filteredBranches = branches.filter(b => b.name.toLowerCase().includes(search.toLowerCase()));
 
@@ -134,6 +156,20 @@ export const BranchRealTimeDashboard: React.FC<{
 
   return (
     <div className="space-y-8">
+      <div className="flex items-center justify-between px-4">
+        <h3 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+          Gerenciamento de Saldos
+        </h3>
+        <button
+          onClick={handleSyncAll}
+          disabled={isSyncing}
+          className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+        >
+          <RefreshCw size={14} className={cn(isSyncing && "animate-spin")} />
+          Sincronizar Tudo
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-4">
         {paginatedBranches.map((branch) => (
           <BranchCard 

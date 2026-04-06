@@ -3,6 +3,7 @@ import { Card } from '@/components/UI';
 import { Bell, CheckCircle, AlertCircle, Info, X } from 'lucide-react';
 import { Notification } from '@/types';
 import { cn } from '@/lib/utils';
+import { useNavigate } from 'react-router-dom';
 
 interface NotificationsViewProps {
   notifications: Notification[];
@@ -21,6 +22,7 @@ export const NotificationsView = ({
   onDelete,
   isPopover = false 
 }: NotificationsViewProps) => {
+  const navigate = useNavigate();
   const getIcon = (type: string) => {
     switch (type) {
       case 'success': return <CheckCircle size={20} className="text-emerald-500" />;
@@ -64,10 +66,16 @@ export const NotificationsView = ({
             <Card 
               key={notif.id} 
               className={cn(
-                "p-4 flex gap-4 relative group transition-all duration-300", 
+                "p-4 flex gap-4 relative group transition-all duration-300 cursor-pointer hover:border-primary/40", 
                 notif.read ? "opacity-60 grayscale-[0.5]" : "border-primary/20 bg-primary/5 shadow-[0_0_15px_rgba(var(--primary-rgb),0.05)]"
               )} 
               hoverable={false}
+              onClick={() => {
+                if ((notif as any).branch_id) {
+                  navigate(`/companies/${(notif as any).company_id || '0'}/branches/${(notif as any).branch_id}`);
+                }
+                if (onMarkAsRead) onMarkAsRead(notif.id);
+              }}
             >
               <div className={cn(
                 "p-2 rounded-lg h-fit",

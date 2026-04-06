@@ -1474,70 +1474,7 @@ export default function App() {
           <KPI label="Saldo Total" value={formatCurrency(totalBalance)} icon={Wallet} animateBorder={true} />
         </div>
 
-        {/* Critical Branches Banner */}
-        {!dismissedCriticalBranches && branchesForCompany.filter(b => {
-          const dailySpend = calculateDailySpend((campaigns || []).filter(c => c.branch_id === b.id));
-          return dailySpend > 0 && (b.balance || 0) / dailySpend <= 3;
-        }).length > 0 && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold tracking-tight text-rose-500 flex items-center gap-2">
-                <AlertTriangle size={20} />
-                Filiais com Saldo Crítico (≤ 3 dias)
-              </h3>
-              <button 
-                onClick={() => {
-                  setDismissedCriticalBranches(true);
-                  if (selectedCompany) {
-                    dismissCriticalBranchesForCompany(selectedCompany.id);
-                  }
-                }}
-                className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-500/10 transition-colors"
-                title="Ocultar alertas"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {branchesForCompany.filter(b => {
-                const dailySpend = calculateDailySpend((campaigns || []).filter(c => c.branch_id === b.id));
-                return dailySpend > 0 && (b.balance || 0) / dailySpend <= 3;
-              }).map(branch => {
-                const dailySpend = calculateDailySpend((campaigns || []).filter(c => c.branch_id === branch.id));
-                const daysLeft = (branch.balance || 0) / dailySpend;
-                return (
-                  <Tooltip
-                    key={branch.id}
-                    content={
-                      <div className="space-y-1">
-                        <p><span className="text-primary font-bold">Gasto Diário:</span> {formatCurrency(dailySpend)}</p>
-                        <p><span className="text-primary font-bold">WhatsApp:</span> {branch.whatsapp || '-'}</p>
-                      </div>
-                    }
-                  >
-                    <Card 
-                      className="bg-rose-500/10 border-rose-500/20 cursor-pointer hover:bg-rose-500/20 transition-colors"
-                      onClick={() => handleSelectBranch(branch)}
-                      animateBorder={true}
-                    >
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h4 className="font-bold text-rose-600 dark:text-rose-400">{branch.name}</h4>
-                          <p className="text-sm text-rose-600/80 dark:text-rose-400/80 mt-1">
-                            Saldo: {formatCurrency(branch.balance || 0)}
-                          </p>
-                        </div>
-                        <div className="px-2 py-1 bg-rose-500 text-white text-xs font-bold rounded-md">
-                          {daysLeft < 1 ? 'Acaba hoje' : `${Math.floor(daysLeft)} dias`}
-                        </div>
-                      </div>
-                    </Card>
-                  </Tooltip>
-                );
-              })}
-            </div>
-          </div>
-        )}
+
 
         <div className="space-y-4">
           <h3 className="text-lg font-bold tracking-tight">Top 3 Filiais</h3>
