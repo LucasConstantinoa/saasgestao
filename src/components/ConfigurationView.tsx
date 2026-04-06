@@ -11,6 +11,107 @@ const hexToRgb = (hex: string) => {
   return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : null;
 };
 
+const BranchMetaLinker = ({ branch, adAccounts, onLink }: any) => {
+  const [search, setSearch] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+
+  const filtered = adAccounts.filter((acc: any) => 
+    acc.account_name.toLowerCase().includes(search.toLowerCase()) ||
+    acc.account_id.toLowerCase().includes(search.toLowerCase())
+  ).slice(0, 5); // Show top 5 matches
+
+  const currentAccount = adAccounts.find((acc: any) => acc.account_id === branch.facebook_ad_account_id);
+
+  return (
+    <div className="p-5 border border-border rounded-3xl bg-surface-light/30 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary font-bold shadow-sm">
+            {branch.name.substring(0, 1).toUpperCase()}
+          </div>
+          <div>
+            <p className="text-sm font-black text-foreground">{branch.name}</p>
+            <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Meta Ads Management</span>
+          </div>
+        </div>
+      </div>
+
+      {!currentAccount || isSearching ? (
+        <div className="space-y-3 pt-2">
+          <div className="relative group">
+            <input 
+              type="text" 
+              placeholder="Pesquisar contas Meta Ads (ID ou Nome)..."
+              className="w-full bg-surface border border-border/50 p-3 h-12 rounded-2xl text-xs font-bold outline-none focus:border-primary/50 transition-all placeholder:text-muted-foreground/50 pr-10"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {isSearching && (
+              <button 
+                onClick={() => setIsSearching(false)}
+                className="absolute right-3 top-3 text-[10px] font-black text-rose-500 uppercase px-2 py-1 bg-rose-500/10 rounded-lg"
+              >
+                Cancelar
+              </button>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            {search.length > 0 && filtered.length === 0 && (
+              <p className="text-[10px] text-muted-foreground text-center py-2">Nenhuma conta encontrada para "{search}"</p>
+            )}
+            
+            {(search.length > 0 ? filtered : []).map((acc: any) => (
+              <motion.button
+                key={acc.account_id}
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                onClick={() => {
+                  onLink(branch.id, acc.account_id);
+                  setIsSearching(false);
+                  setSearch('');
+                }}
+                className="w-full flex items-center justify-between p-3 rounded-2xl bg-background border border-border/30 hover:border-primary/30 hover:bg-primary/5 transition-all group"
+              >
+                <div className="text-left">
+                  <p className="text-[11px] font-bold text-foreground group-hover:text-primary transition-colors">{acc.account_name}</p>
+                  <p className="text-[9px] text-muted-foreground font-mono">act_{acc.account_id}</p>
+                </div>
+                <div className="text-right">
+                <p className="text-[10px] font-black text-foreground">R$ {acc.amount_spent?.toFixed(2) || '0.00'}</p>
+                  <p className="text-[8px] text-muted-foreground uppercase">Saldo Gasto</p>
+                </div>
+              </motion.button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="p-4 rounded-2xl bg-primary/5 border border-primary/20 flex items-center justify-between animate-in fade-in zoom-in duration-300">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center text-white">
+              <CheckCircle2 size={16} />
+            </div>
+            <div>
+              <p className="text-[11px] font-bold text-foreground">{currentAccount.account_name}</p>
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] text-primary font-bold uppercase tracking-tighter">Fixado</span>
+                <span className="text-[8px] text-muted-foreground font-mono opacity-50">act_{currentAccount.account_id}</span>
+              </div>
+            </div>
+          </div>
+          <button 
+            onClick={() => setIsSearching(true)}
+            className="p-2 text-muted-foreground hover:text-primary transition-colors hover:bg-primary/5 rounded-lg"
+            title="Alterar conta"
+          >
+            <Settings size={14} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ModalBase = ({ title, subtitle, icon: Icon, children, onClose }: any) => (
   <motion.div 
     initial={{ opacity: 0 }}
@@ -302,32 +403,24 @@ export const ConfigurationView = () => {
                 </div>
               </div>
 
-              <h4 className="font-black text-sm text-primary uppercase tracking-widest mt-8 mb-4">Vincular Contas Meta Ads</h4>
-              <p className="text-xs text-muted-foreground mb-4">Escolha qual conta de anúncio do Facebook pertence a cada filial. Os dados de saldo e campanhas serão puxados automaticamente.</p>
+              <h4 className="font-black text-sm text-primary uppercase tracking-widest mt-8 mb-4">Gestão do Meta Ads por Filial</h4>
+              <p className="text-xs text-muted-foreground mb-6">Cada filial deve ter uma conta de anúncio fixada para sincronização de saldos e campanhas em tempo real.</p>
               
-              {branches.map(branch => (
-                <div key={branch.id} className="p-4 border border-border rounded-2xl bg-surface-light/30">
-                  <p className="text-sm font-bold text-foreground mb-2">{branch.name}</p>
-                  <select 
-                    className="w-full bg-surface border border-border p-2.5 rounded-xl text-sm font-medium outline-none focus:border-primary transition-colors"
-                    value={branch.facebook_ad_account_id || ''}
-                    onChange={async (e) => {
-                      const val = e.target.value;
-                      await supabase.from('branches').update({ facebook_ad_account_id: val || null }).eq('id', branch.id);
+              <div className="space-y-4">
+                {branches.map(branch => (
+                  <BranchMetaLinker 
+                    key={branch.id} 
+                    branch={branch} 
+                    adAccounts={adAccounts}
+                    onLink={async (branchId: number, accountId: string) => {
+                      await supabase.from('branches').update({ facebook_ad_account_id: accountId }).eq('id', branchId);
                       // Update local visual state optimally
-                      branch.facebook_ad_account_id = val;
+                      branch.facebook_ad_account_id = accountId;
                       setAdAccounts([...adAccounts]); // Just trigger re-render
                     }}
-                  >
-                    <option value="" className="bg-background text-foreground">Nenhuma conta vinculada</option>
-                    {adAccounts.map(acc => (
-                      <option key={acc.account_id} value={acc.account_id} className="bg-background text-foreground">
-                        {acc.account_name} (Saldo Gasto: R$ {acc.amount_spent?.toFixed(2) || '0.00'})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
+                  />
+                ))}
+              </div>
             </div>
           </ModalBase>
         )}
