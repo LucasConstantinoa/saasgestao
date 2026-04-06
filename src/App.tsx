@@ -116,7 +116,7 @@ const RealTimeBalanceKPI = ({ branch, campaigns, onSync, isSyncing, onConfigure 
 
   return <KPI 
     label="Saldo Atual" 
-    value={!hasFacebookConfig ? "NÃO CONFIGURADO" : formatCurrency(branch.balance || 0, 4)} 
+    value={!hasFacebookConfig ? "NÃO CONFIGURADO" : formatCurrency(branch.balance || 0, 2)} 
     icon={Wallet} 
     trendLabel={!hasFacebookConfig ? "ID da Conta de Anúncios ausente" : "Saldo da última sincronização"} 
     valueClassName={cn(
@@ -593,6 +593,36 @@ export default function App() {
     } catch (error) {
       console.error('Error deleting sale:', error);
       addToast('error', 'Erro ao excluir', 'Não foi possível remover a venda.');
+    }
+  };
+
+  const handleSyncBranchBalance = async () => {
+    if (!selectedBranch) return;
+    setIsSyncingBalance(true);
+    addToast('info', 'Sincronizando', `Buscando saldo real do Facebook para ${selectedBranch.name}...`);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      
+      const response = await axios.post('/api/facebook/sync', 
+        { branchId: selectedBranch.id },
+        { headers: { Authorization: `Bearer ${session.access_token}` } }
+      );
+      
+      if (response.data.success) {
+        // Update local branches state
+        setBranches(prev => prev.map(b => 
+          b.id === selectedBranch.id ? { ...b, balance: response.data.balance } : b
+        ));
+        // Also update selected branch to refresh the UI immediately
+        setSelectedBranch(prev => prev ? { ...prev, balance: response.data.balance } : null);
+        addToast('success', 'Sincronizado', 'O saldo foi atualizado com sucesso.');
+      }
+    } catch (err) {
+      console.error('Error syncing individual branch balance:', err);
+      addToast('error', 'Erro ao sincronizar', 'Não foi possível atualizar o saldo agora.');
+    } finally {
+      setIsSyncingBalance(false);
     }
   };
 
@@ -1649,7 +1679,7 @@ export default function App() {
         <RealTimeBalanceKPI 
           branch={selectedBranch} 
           campaigns={branchCampaigns} 
-          onSync={() => {}}
+          onSync={handleSyncBranchBalance}
           isSyncing={isSyncingBalance}
           onConfigure={() => {
             if (selectedBranch) {
