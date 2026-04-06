@@ -219,7 +219,10 @@ async function syncBranchBalance(supabaseClient: any, branch: any) {
         const cleanId = accountId.replace('act_', '');
         const accountRes = await axiosWithRetry(() => axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
           headers: { Authorization: `Bearer ${tokenToUse}` },
-          params: { fields: 'balance,funding_source_details,spend_cap,amount_spent,account_status' }
+          params: { 
+            fields: 'balance,is_prepaid_account,funding_source_details,spend_cap,amount_spent,account_status',
+            appsecret_proof: getAppSecretProof(tokenToUse)
+          }
         }));
         
         const data = accountRes.data;
@@ -240,21 +243,22 @@ async function syncBranchBalance(supabaseClient: any, branch: any) {
           if (data.funding_source_details && data.funding_source_details.balance) {
             const val = parseFloat(data.funding_source_details.balance);
             accountBalance = isNaN(val) ? 0 : val / 100;
-          } else if (balance > 0) {
-            accountBalance = balance;
           } else {
-            accountBalance = 0;
+            accountBalance = Math.max(0, balance);
           }
         } else {
-          accountBalance = -balance;
+          // Postpaid: balance usually shows debt (positive). We want available = (cap - spent) OR (-debt)
           if (data.spend_cap && data.spend_cap !== "0") {
-            accountBalance = spendCap - amountSpent;
+            accountBalance = Math.max(0, spendCap - amountSpent);
+          } else {
+            accountBalance = -balance;
           }
         }
         
+        console.log(`[DEBUG] Syncing branch ${branch.id}, account ${data.id}. isPrepaid: ${!!isPrepaid}, rawBalance: ${balanceVal}, calculatedAccountBalance: ${accountBalance}`);
         totalBalance += accountBalance;
-      } catch (err) {
-        console.error(`Erro ao buscar conta ${accountId}:`, err);
+      } catch (err: any) {
+        console.error(`Erro ao buscar conta ${accountId}:`, err.message);
       }
     }));
 
