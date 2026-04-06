@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useTrafficFlow } from '@/context/TrafficFlowContext';
 import { BalanceEvolutionChart } from './BalanceEvolutionChart';
-import { Trash2, AlertTriangle, CheckCircle, Clock, AlertCircle, Building2, PauseCircle, TrendingUp, Wallet, Zap, BarChart3 } from 'lucide-react';
+import { Trash2, AlertTriangle, CheckCircle, Clock, AlertCircle, Building2, PauseCircle, TrendingUp, Wallet, Zap, BarChart3, RefreshCw } from 'lucide-react';
 import { Modal } from '@/components/Modal';
 import { Tooltip } from '@/components/Tooltip';
 import { cn } from '@/lib/utils';
@@ -33,11 +33,24 @@ export const BranchRealTimeDashboard: React.FC<{
   const handleSyncBranch = async (branchId: number) => {
     setIsSyncing(true);
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      addToast('success', 'Sincronizado', 'Saldo atualizado.');
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      
+      const response = await axios.post('/api/facebook/sync', 
+        { branchId },
+        { headers: { Authorization: `Bearer ${session.access_token}` } }
+      );
+      
+      if (response.data.success) {
+        // Update local branches state with the new balance
+        setBranches(prev => prev.map(b => 
+          b.id === branchId ? { ...b, balance: response.data.balance } : b
+        ));
+        addToast('success', 'Sincronizado', 'Saldo atualizado com sucesso.');
+      }
     } catch (err) {
       console.error('Error syncing balance:', err);
-      addToast('error', 'Erro ao sincronizar', 'Não foi possível atualizar o saldo.');
+      addToast('error', 'Erro ao sincronizar', 'Não foi possível atualizar o saldo agora.');
     } finally {
       setIsSyncing(false);
     }
@@ -292,6 +305,13 @@ const BranchCard: React.FC<{
                   <BarChart3 size={14} />
                 </button>
                 <button 
+                  className="p-2 rounded-lg text-muted-foreground hover:text-emerald-500 hover:bg-emerald-500/10 transition-all"
+                  onClick={(e) => { e.stopPropagation(); onSync && onSync(); }}
+                  disabled={isSyncing}
+                >
+                  <RefreshCw size={14} className={cn(isSyncing && "animate-spin")} />
+                </button>
+                <button 
                   className="p-2 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-all" 
                   onClick={(e) => { e.stopPropagation(); onDelete(); }}
                 >
@@ -301,6 +321,7 @@ const BranchCard: React.FC<{
             </div>
 
             <div className="flex-1 flex flex-col items-center justify-center py-4">
+              <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1">Saldo Atual Meta</span>
               <div className={cn(
                 "text-4xl font-black tracking-tight",
                 isAllPaused ? "text-muted-foreground" : "text-foreground"

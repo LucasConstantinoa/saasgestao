@@ -311,6 +311,33 @@ api.post("/facebook/sync-all", userAuth, async (req, res) => {
   }
 });
 
+api.post("/facebook/sync", userAuth, async (req, res) => {
+  const { branchId } = req.body;
+  if (!branchId) return res.status(400).json({ error: 'branchId is required' });
+  
+  try {
+    const { data: branch, error } = await supabaseAdmin
+      .from('branches')
+      .select('id, facebook_ad_account_id, facebook_access_token')
+      .eq('id', branchId)
+      .single();
+      
+    if (error || !branch) return res.status(404).json({ error: 'Branch not found' });
+    
+    await syncBranchBalance(supabaseAdmin, branch);
+    
+    const { data: updatedBranch } = await supabaseAdmin
+      .from('branches')
+      .select('balance')
+      .eq('id', branchId)
+      .single();
+      
+    res.json({ success: true, balance: updatedBranch?.balance });
+  } catch (err) {
+    res.status(500).json({ error: 'Erro ao sincronizar filial' });
+  }
+});
+
 // Admin Routes
 api.post("/admin/users", adminAuth, async (req, res) => {
   try {
