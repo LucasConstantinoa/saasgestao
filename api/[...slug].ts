@@ -4,38 +4,9 @@ import cors from "cors";
 import path from "path";
 import fs from "fs";
 import axios from "axios";
+import { createClient } from "@supabase/supabase-js";
 
-// Mock Supabase client
-const createClient = (url: string, key: string, options?: any) => ({
-  auth: {
-    getUser: async (token?: string) => ({ data: { user: null }, error: null })
-  },
-  from: (table: string) => {
-    const mockQuery: any = {
-      select: () => mockQuery,
-      eq: () => mockQuery,
-      neq: () => mockQuery,
-      order: () => mockQuery,
-      limit: () => mockQuery,
-      lte: () => mockQuery,
-      gte: () => mockQuery,
-      single: async () => ({ data: null, error: null }),
-      then: (cb: any) => Promise.resolve({ data: [], error: null }).then(cb),
-      catch: (cb: any) => Promise.resolve({ data: [], error: null }).catch(cb),
-      finally: (cb: any) => Promise.resolve({ data: [], error: null }).finally(cb),
-    };
-    mockQuery.then = function(onfulfilled: any, onrejected: any) {
-      return Promise.resolve({ data: [], error: null }).then(onfulfilled, onrejected);
-    };
-    return {
-      select: () => mockQuery,
-      insert: () => mockQuery,
-      update: () => mockQuery,
-      delete: () => mockQuery,
-      upsert: () => mockQuery
-    };
-  }
-});
+
 
 async function axiosWithRetry(fn: () => Promise<any>, retries = 3, backoff = 1000): Promise<any> {
   try {

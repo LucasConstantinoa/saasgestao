@@ -135,9 +135,9 @@ export const TrafficFlowProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
       if (userError) {
         console.error('Error fetching user role:', userError);
-        setIsAdmin(sessionData.session.user.email === 'brtreino@gmail.com');
+        setIsAdmin(['brtreino@gmail.com', 'trafegopagoprosul@gmail.com'].includes(sessionData.session.user.email || ''));
       } else {
-        setIsAdmin(userData?.role === 'admin' || sessionData.session.user.email === 'brtreino@gmail.com');
+        setIsAdmin(userData?.role === 'admin' || ['brtreino@gmail.com', 'trafegopagoprosul@gmail.com'].includes(sessionData.session.user.email || ''));
       }
       
       const fetchTable = async (tableName: string, options: any = {}) => {
