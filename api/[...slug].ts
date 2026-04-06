@@ -392,7 +392,7 @@ api.all("/facebook/sync-all", (req, res, next) => {
   res.status(405).json({ error: `Method ${req.method} not allowed for /facebook/sync-all` });
 });
 
-api.post("/facebook/sync-all", userAuth, async (req, res) => {
+api.post("/facebook/sync-all", adminAuth, async (req, res) => {
   try {
     await syncAllBranchesBalances();
     res.json({ success: true });
@@ -401,7 +401,7 @@ api.post("/facebook/sync-all", userAuth, async (req, res) => {
   }
 });
 
-api.post("/facebook/sync", userAuth, async (req, res) => {
+api.post("/facebook/sync", branchAuth, async (req, res) => {
   const { branchId } = req.body;
   if (!branchId) return res.status(400).json({ error: 'branchId is required' });
   
@@ -976,18 +976,19 @@ api.all("*", (req, res) => {
   });
 });
 
-// Mount the API router at /api
+// Mount the API router at both /api and root to handle different environments
 app.use("/api", api);
+app.use("/", api);
 
 // Catch-all route for API to debug 404s
-app.all("/api/*", (req, res, next) => {
-  console.log(`[API 404] ${req.method} ${req.url}`);
-  console.log(`[API 404] Headers:`, JSON.stringify(req.headers));
+app.all("*", (req, res, next) => {
+  console.log(`[Global 404] ${req.method} ${req.url}`);
   res.status(404).json({ 
     error: `Route ${req.method} ${req.url} not found in Express API`,
-    message: "If you are seeing this, the Vercel rewrite is working but the Express route is not matching.",
+    message: "If you are seeing this, the route is not defined in any router.",
     method: req.method,
-    url: req.url
+    url: req.url,
+    path: req.path
   });
 });
 
