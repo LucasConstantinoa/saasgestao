@@ -969,14 +969,128 @@ api.get("/health", (req, res) => {
   });
 });
 
-// Catch-all for API router to debug unmatched routes
+// === DEVELOPER DIAGNOSTIC PAGE ===
+// Serves a visual HTML page when devs/admins visit API routes in browser
+
+const diagnosticHTML = (route: string, info: any) => `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>🔧 API Diagnóstico - ${route}</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:#0a0e1a;color:#e0e0e0;font-family:'Segoe UI',system-ui,sans-serif;padding:24px}
+    .container{max-width:900px;margin:0 auto}
+    h1{font-size:28px;color:#00d4ff;margin-bottom:8px;display:flex;align-items:center;gap:12px}
+    h1 span{font-size:16px;background:#1a2035;padding:4px 12px;border-radius:8px;color:#7a8baa}
+    .badge{display:inline-block;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px}
+    .badge-ok{background:#10b98120;color:#10b981;border:1px solid #10b98140}
+    .badge-err{background:#ef444420;color:#ef4444;border:1px solid #ef444440}
+    .badge-warn{background:#f59e0b20;color:#f59e0b;border:1px solid #f59e0b40}
+    .card{background:#111827;border:1px solid #1e293b;border-radius:16px;padding:20px;margin:16px 0}
+    .card h2{font-size:16px;color:#94a3b8;margin-bottom:12px;font-weight:600}
+    .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #1e293b}
+    .row:last-child{border:none}
+    .row .label{color:#64748b;font-size:13px}
+    .row .value{color:#e2e8f0;font-size:13px;font-weight:600;font-family:'Cascadia Code','Fira Code',monospace}
+    .routes{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+    .route{background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:12px;font-size:12px}
+    .route .method{font-weight:700;margin-right:6px}
+    .method-get{color:#22d3ee}.method-post{color:#a78bfa}.method-delete{color:#f87171}
+    .footer{margin-top:32px;text-align:center;color:#475569;font-size:11px}
+    a{color:#00d4ff;text-decoration:none}a:hover{text-decoration:underline}
+    pre{background:#0f172a;padding:12px;border-radius:8px;font-size:12px;overflow-x:auto;color:#94a3b8;margin-top:8px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔧 API Diagnóstico <span>${route}</span></h1>
+    <p style="color:#64748b;margin:8px 0 24px">Painel de desenvolvedor — Somente para admins</p>
+
+    <div class="card">
+      <h2>⚡ Status do Servidor</h2>
+      <div class="row"><span class="label">Supabase Admin</span><span class="value">${info.supabaseAdmin ? '<span class="badge badge-ok">Conectado</span>' : '<span class="badge badge-err">Desconectado</span>'}</span></div>
+      <div class="row"><span class="label">Facebook App Secret</span><span class="value">${info.fbSecret ? '<span class="badge badge-ok">Configurado</span>' : '<span class="badge badge-warn">Não definido</span>'}</span></div>
+      <div class="row"><span class="label">Ambiente</span><span class="value">${info.vercel ? 'Vercel (Produção)' : 'Local (Dev)'}</span></div>
+      <div class="row"><span class="label">Rota acessada</span><span class="value">${route}</span></div>
+      <div class="row"><span class="label">Timestamp</span><span class="value">${new Date().toISOString()}</span></div>
+    </div>
+
+    <div class="card">
+      <h2>🗺️ Rotas Disponíveis</h2>
+      <div class="routes">
+        <div class="route"><span class="method method-get">GET</span> /api/health</div>
+        <div class="route"><span class="method method-get">GET</span> /api/facebook/ad-accounts</div>
+        <div class="route"><span class="method method-get">GET</span> /api/facebook/balance</div>
+        <div class="route"><span class="method method-get">GET</span> /api/facebook/accounts</div>
+        <div class="route"><span class="method method-get">GET</span> /api/campaigns</div>
+        <div class="route"><span class="method method-post">POST</span> /api/facebook/sync</div>
+        <div class="route"><span class="method method-post">POST</span> /api/facebook/sync-all</div>
+        <div class="route"><span class="method method-post">POST</span> /api/facebook/exchange-token</div>
+        <div class="route"><span class="method method-post">POST</span> /api/admin/users</div>
+        <div class="route"><span class="method method-get">GET</span> /api/admin/users</div>
+        <div class="route"><span class="method method-post">POST</span> /api/admin/permissions</div>
+        <div class="route"><span class="method method-get">GET</span> /api/admin/permissions</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>💡 Dica</h2>
+      <p style="font-size:13px;color:#94a3b8">Rotas <span class="method method-post" style="font-size:12px">POST</span> só funcionam via requisição AJAX (axios/fetch), não pelo navegador. Use o <a href="/configuration">Centro de Diagnóstico</a> na aba Configurações para testar as APIs.</p>
+    </div>
+
+    <div class="footer">SaaS Gestão — API v1.0 — ${new Date().toLocaleDateString('pt-BR')}</div>
+  </div>
+</body>
+</html>`;
+
+// GET handlers for sync routes (show diagnostic page instead of 404)
+api.get("/facebook/sync", (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(diagnosticHTML('/api/facebook/sync', {
+    supabaseAdmin: !!supabaseAdmin,
+    fbSecret: !!process.env.FACEBOOK_APP_SECRET,
+    vercel: !!process.env.VERCEL
+  }));
+});
+
+api.get("/facebook/sync-all", (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(diagnosticHTML('/api/facebook/sync-all', {
+    supabaseAdmin: !!supabaseAdmin,
+    fbSecret: !!process.env.FACEBOOK_APP_SECRET,
+    vercel: !!process.env.VERCEL
+  }));
+});
+
+// Root API diagnostic page
+api.get("/", (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(diagnosticHTML('/api', {
+    supabaseAdmin: !!supabaseAdmin,
+    fbSecret: !!process.env.FACEBOOK_APP_SECRET,
+    vercel: !!process.env.VERCEL
+  }));
+});
+
+// Catch-all for API router — show diagnostic for GET, JSON error for others
 api.all("*", (req, res) => {
-  console.log(`[API Router 404] ${req.method} ${req.url}`);
-  res.status(404).json({ 
-    error: `Route ${req.method} ${req.url} not found in API router`,
-    method: req.method,
-    url: req.url
-  });
+  console.log(`[API Router] ${req.method} ${req.url}`);
+  if (req.method === 'GET') {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(diagnosticHTML(req.originalUrl || req.url, {
+      supabaseAdmin: !!supabaseAdmin,
+      fbSecret: !!process.env.FACEBOOK_APP_SECRET,
+      vercel: !!process.env.VERCEL
+    }));
+  } else {
+    res.status(404).json({ 
+      error: `Route ${req.method} ${req.url} not found`,
+      hint: 'Use GET /api/health para verificar o status do servidor'
+    });
+  }
 });
 
 // Mount the API router - URL normalization middleware already strips /api/ prefix
