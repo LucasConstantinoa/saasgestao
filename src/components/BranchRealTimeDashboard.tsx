@@ -28,29 +28,132 @@ export const BranchRealTimeDashboard: React.FC<{
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [branchToDelete, setBranchToDelete] = useState<Branch | null>(null);
   const { addToast } = useToasts();
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncingBranches, setSyncingBranches] = useState<Set<number>>(new Set());
 
   const handleSyncBranch = async (branchId: number) => {
-    setIsSyncing(true);
+    setSyncingBranches(prev => new Set(prev).add(branchId));
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-      
-      const response = await axios.post('/api/facebook/sync', 
-        { branchId },
-        { headers: { Authorization: `Bearer ${session.access_token}` } }
-      );
-      
-      if (response.data.success) {
-        // Refresh all branch data to ensure campaigns and balance are in sync with DB
-        await fetchData();
-        addToast('success', 'Sincronizado', 'Saldo e campanhas atualizados com sucesso.');
+      // 1. Get branch data from Supabase
+      const { data: branch, error: branchError } = await supabase
+        .from('branches')
+        .select('id, name, facebook_ad_account_id, facebook_access_token')
+        .eq('id', branchId)
+        .single();
+
+      if (branchError || !branch) {
+        addToast('error', 'Erro', 'Filial não encontrada no banco de dados.');
+        return;
       }
-    } catch (err) {
-      console.error('Error syncing balance:', err);
-      addToast('error', 'Erro ao sincronizar', 'Não foi possível atualizar o saldo agora.');
+
+      if (!branch.facebook_ad_account_id) {
+        addToast('warning', 'Sem conta', `${branch.name} não tem conta de anúncio configurada.`);
+        return;
+      }
+
+      // 2. Get token (branch token or global fallback)
+      let token = branch.facebook_access_token;
+      if (!token) {
+        const { data: settingsRow } = await supabase
+          .from('settings')
+          .select('value')
+          .eq('key', 'facebook_access_token')
+          .single();
+        token = settingsRow?.value;
+      }
+
+      if (!token) {
+        addToast('error', 'Sem token', 'Token do Facebook não encontrado.');
+        return;
+      }
+
+      // 3. Parse ad account IDs
+      const adAccountIds = branch.facebook_ad_account_id.split(',')
+        .map((id: string) => id.trim().split('|')[0].replace('act_', ''))
+        .filter(Boolean);
+
+      if (adAccountIds.length === 0) {
+        addToast('error', 'Sem contas', 'Nenhum ID de conta válido encontrado.');
+        return;
+      }
+
+      // 4. Call Facebook Graph API directly and calculate balance
+      let totalBalance = 0;
+      const parseDisplayValue = (str: string | undefined) => {
+        if (!str) return 0;
+        const cleaned = str.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
+        return parseFloat(cleaned) || 0;
+      };
+
+      const results = await Promise.all(adAccountIds.map(async (cleanId: string) => {
+        try {
+          const response = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+            params: {
+              access_token: token,
+              fields: 'balance,is_prepaid_account,funding_source_details{id,display_string,balance,type},spend_cap,amount_spent,total_prepaid_balance'
+            }
+          });
+
+          const data = response.data;
+          const isPrepaid = data.is_prepaid_account || !!(data.funding_source_details && (data.funding_source_details.balance || data.funding_source_details.display_string));
+
+          let accountBalance = 0;
+          if (isPrepaid) {
+            const fundingVal = data.funding_source_details?.balance ? parseFloat(data.funding_source_details.balance) / 100 : 0;
+            const prepaidVal = data.total_prepaid_balance ? parseFloat(data.total_prepaid_balance) / 100 : 0;
+            const displayVal = parseDisplayValue(data.funding_source_details?.display_string);
+            accountBalance = Math.abs(fundingVal || prepaidVal || displayVal || (parseFloat(data.balance || "0") / 100));
+          } else {
+            const rawBalance = parseFloat(data.balance || "0") / 100;
+            const amountSpent = parseFloat(data.amount_spent || "0") / 100;
+            const spendCap = parseFloat(data.spend_cap || "0") / 100;
+            if (spendCap > 0) {
+              accountBalance = Math.max(0, spendCap - amountSpent);
+            } else {
+              accountBalance = -rawBalance;
+            }
+          }
+
+          return { id: cleanId, balance: accountBalance, ok: true };
+        } catch (err: any) {
+          console.error(`Erro conta ${cleanId}:`, err.response?.data || err.message);
+          return { id: cleanId, balance: 0, ok: false, error: err.response?.data?.error?.message || err.message };
+        }
+      }));
+
+      totalBalance = results.filter(r => r.ok).reduce((sum, r) => sum + r.balance, 0);
+      const failedCount = results.filter(r => !r.ok).length;
+
+      // 5. Save to Supabase
+      const { error: updateError } = await supabase
+        .from('branches')
+        .update({ balance: totalBalance, updated_at: new Date().toISOString() })
+        .eq('id', branchId);
+
+      if (updateError) {
+        console.error('Supabase update error:', updateError);
+        addToast('error', 'Erro Supabase', 'Não foi possível salvar o saldo atualizado.');
+        return;
+      }
+
+      // 6. Update UI immediately
+      setBranches(prev => prev.map(b =>
+        b.id === branchId ? { ...b, balance: totalBalance, updated_at: new Date().toISOString() } : b
+      ));
+
+      if (failedCount > 0) {
+        addToast('warning', 'Parcial', `Saldo atualizado: R$ ${totalBalance.toFixed(2)} (${failedCount} conta(s) com erro)`);
+      } else {
+        addToast('success', 'Sincronizado', `${branch.name}: R$ ${totalBalance.toFixed(2)}`);
+      }
+    } catch (err: any) {
+      console.error('Sync error:', err);
+      addToast('error', 'Erro ao sincronizar', err.message || 'Falha na comunicação com o Facebook.');
     } finally {
-      setIsSyncing(false);
+      setSyncingBranches(prev => {
+        const next = new Set(prev);
+        next.delete(branchId);
+        return next;
+      });
     }
   };
 
@@ -67,24 +170,18 @@ export const BranchRealTimeDashboard: React.FC<{
   }, [companyId]);
 
   const handleSyncAll = async () => {
-    setIsSyncing(true);
-    addToast('info', 'Sincronizando', 'Buscando saldos de todas as filiais...');
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-      
-      await axios.post('/api/facebook/sync-all', {}, {
-        headers: { Authorization: `Bearer ${session.access_token}` }
-      });
-      
-      await fetchData();
-      addToast('success', 'Sincronização Concluída', 'Todos os saldos foram atualizados.');
-    } catch (err) {
-      console.error('Error syncing all branches:', err);
-      addToast('error', 'Erro', 'Não foi possível sincronizar todas as filiais.');
-    } finally {
-      setIsSyncing(false);
+    const activeBranches = branches.filter(b => b.facebook_ad_account_id);
+    if (activeBranches.length === 0) {
+      addToast('warning', 'Sem filiais', 'Nenhuma filial com conta de anúncio configurada.');
+      return;
     }
+    addToast('info', 'Sincronizando', `Buscando saldos de ${activeBranches.length} filiais...`);
+    
+    for (const branch of activeBranches) {
+      await handleSyncBranch(branch.id);
+    }
+    
+    addToast('success', 'Concluído', 'Sincronização de todas as filiais finalizada.');
   };
 
   const filteredBranches = branches.filter(b => b.name.toLowerCase().includes(search.toLowerCase()));
@@ -160,10 +257,10 @@ export const BranchRealTimeDashboard: React.FC<{
         </h3>
         <button
           onClick={handleSyncAll}
-          disabled={isSyncing}
+          disabled={syncingBranches.size > 0}
           className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
         >
-          <RefreshCw size={14} className={cn(isSyncing && "animate-spin")} />
+          <RefreshCw size={14} className={cn(syncingBranches.size > 0 && "animate-spin")} />
           Sincronizar Tudo
         </button>
       </div>
@@ -179,7 +276,7 @@ export const BranchRealTimeDashboard: React.FC<{
             onDelete={() => handleDeleteClick(branch)}
             onClick={() => onBranchClick(branch)}
             onSync={() => handleSyncBranch(branch.id)}
-            isSyncing={isSyncing}
+            isSyncing={syncingBranches.has(branch.id)}
           />
         ))}
       </div>
