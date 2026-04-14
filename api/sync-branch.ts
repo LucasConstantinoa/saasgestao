@@ -82,11 +82,14 @@ export default async function handler(req: any, res: any) {
     for (const cleanId of adAccountIds) {
       try {
         const proof = crypto.createHmac('sha256', fbSecret).update(fbToken).digest('hex');
+        
+        // SURGICAL REQUEST: We only ask for name and funding details.
+        // Adding 'balance' or 'total_prepaid_balance' here often causes Erro #100 on some accounts.
         const response = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
           params: {
             access_token: fbToken,
             appsecret_proof: proof,
-            fields: 'name,balance,is_prepaid_account,funding_source_details{id,display_string,balance,type},spend_cap,amount_spent,total_prepaid_balance'
+            fields: 'name,funding_source_details,currency,account_status'
           },
           timeout: 15000
         });
@@ -95,18 +98,16 @@ export default async function handler(req: any, res: any) {
         let accountVal = 0;
         const displayStr = d.funding_source_details?.display_string;
         const fundingBal = d.funding_source_details?.balance;
-        const prepaidTotal = d.total_prepaid_balance;
-        const rawBal = d.balance;
+        
+        // DEBUG: Logging the exact string we found
+        console.log(`[SYNC] Account ${cleanId} display_string:`, displayStr);
 
-        // LOGIC PRIORITY
+        // LOGIC PRIORITY: Always trust display_string first
         if (displayStr) {
           accountVal = parseDisplayValue(displayStr);
         } else if (fundingBal && parseFloat(fundingBal) !== 0) {
+          // Fallback to numeric balance in cents if display string is missing
           accountVal = Math.abs(parseFloat(fundingBal) / 100);
-        } else if (prepaidTotal && parseFloat(prepaidTotal) !== 0) {
-          accountVal = Math.abs(parseFloat(prepaidTotal) / 100);
-        } else if (rawBal && parseFloat(rawBal) !== 0) {
-          accountVal = Math.abs(parseFloat(rawBal) / 100);
         }
 
         totalBalance += accountVal;
@@ -115,11 +116,10 @@ export default async function handler(req: any, res: any) {
           name: d.name,
           display: displayStr,
           funding: fundingBal,
-          prepaid: prepaidTotal,
-          raw: rawBal,
           calculated: accountVal
         });
       } catch (accErr: any) {
+        console.error(`FB Account Error (${cleanId}):`, accErr.response?.data || accErr.message);
         debugInfo.push({ id: cleanId, error: accErr.response?.data || accErr.message });
       }
     }
