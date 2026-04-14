@@ -48,6 +48,7 @@ export const BranchRealTimeDashboard: React.FC<{
       );
       
       if (response.data.success) {
+        console.log('[DEBUG SYNC] Full response data:', response.data);
         setBranches(prev => prev.map(b =>
           b.id === branchId ? { ...b, balance: response.data.balance, updated_at: new Date().toISOString() } : b
         ));

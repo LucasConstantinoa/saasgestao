@@ -45,21 +45,37 @@ export default async function handler(req: any, res: any) {
     }
 
     let totalBalance = 0;
+    let debugInfo: any[] = [];
 
     const parseDisplayValue = (str: string | undefined) => {
       if (!str) return 0;
+      // Remove everything except numbers, comma, dot and minus
       const cleaned = str.replace(/[^\d,.-]/g, '');
+      if (!cleaned) return 0;
+
       let numericValue = 0;
+      // Precision handling for "1.234,56" vs "1,234.56"
       if (cleaned.includes(',') && cleaned.includes('.')) {
         const lastComma = cleaned.lastIndexOf(',');
         const lastDot = cleaned.lastIndexOf('.');
-        if (lastComma > lastDot) numericValue = parseFloat(cleaned.replace(/\./g, '').replace(',', '.')) || 0;
-        else numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
+        if (lastComma > lastDot) {
+          // BR Format: 1.234,56
+          numericValue = parseFloat(cleaned.replace(/\./g, '').replace(',', '.')) || 0;
+        } else {
+          // US Format: 1,234.56
+          numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
+        }
       } else if (cleaned.includes(',')) {
+        // Just comma: "1234,56" or "1,234"
         const parts = cleaned.split(',');
-        if (parts[parts.length - 1].length === 2) numericValue = parseFloat(cleaned.replace(',', '.')) || 0;
-        else numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
-      } else numericValue = parseFloat(cleaned) || 0;
+        if (parts[parts.length - 1].length === 2) {
+          numericValue = parseFloat(cleaned.replace(',', '.')) || 0;
+        } else {
+          numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
+        }
+      } else {
+        numericValue = parseFloat(cleaned) || 0;
+      }
       return Math.abs(numericValue);
     };
 
@@ -70,36 +86,54 @@ export default async function handler(req: any, res: any) {
           params: {
             access_token: fbToken,
             appsecret_proof: proof,
-            fields: 'balance,is_prepaid_account,funding_source_details{display_string,balance},total_prepaid_balance'
+            fields: 'name,balance,is_prepaid_account,funding_source_details{id,display_string,balance,type},spend_cap,amount_spent,total_prepaid_balance'
           },
-          timeout: 10000
+          timeout: 15000
         });
         
         const d = response.data;
+        let accountVal = 0;
         const displayStr = d.funding_source_details?.display_string;
-        
+        const fundingBal = d.funding_source_details?.balance;
+        const prepaidTotal = d.total_prepaid_balance;
+        const rawBal = d.balance;
+
+        // LOGIC PRIORITY
         if (displayStr) {
-          totalBalance += parseDisplayValue(displayStr);
-        } else if (d.funding_source_details?.balance) {
-          totalBalance += Math.abs(parseFloat(d.funding_source_details.balance) / 100);
-        } else if (d.total_prepaid_balance) {
-          totalBalance += Math.abs(parseFloat(d.total_prepaid_balance) / 100);
-        } else {
-          totalBalance += Math.abs(parseFloat(d.balance || "0") / 100);
+          accountVal = parseDisplayValue(displayStr);
+        } else if (fundingBal && parseFloat(fundingBal) !== 0) {
+          accountVal = Math.abs(parseFloat(fundingBal) / 100);
+        } else if (prepaidTotal && parseFloat(prepaidTotal) !== 0) {
+          accountVal = Math.abs(parseFloat(prepaidTotal) / 100);
+        } else if (rawBal && parseFloat(rawBal) !== 0) {
+          accountVal = Math.abs(parseFloat(rawBal) / 100);
         }
+
+        totalBalance += accountVal;
+        debugInfo.push({
+          id: cleanId,
+          name: d.name,
+          display: displayStr,
+          funding: fundingBal,
+          prepaid: prepaidTotal,
+          raw: rawBal,
+          calculated: accountVal
+        });
       } catch (accErr: any) {
-        console.error(`FB Account Error (${cleanId}):`, accErr.response?.data || accErr.message);
+        debugInfo.push({ id: cleanId, error: accErr.response?.data || accErr.message });
       }
     }
 
-    const { error: updateError } = await supabase.from('branches').update({ 
+    await supabase.from('branches').update({ 
       balance: totalBalance, 
       updated_at: new Date().toISOString() 
     }).eq('id', branchId);
 
-    if (updateError) throw updateError;
-
-    return res.json({ success: true, balance: totalBalance });
+    return res.json({ 
+      success: true, 
+      balance: totalBalance,
+      debug: debugInfo
+    });
 
   } catch (err: any) {
     console.error('Final Sync Error:', err);
