@@ -52,9 +52,10 @@ export const PermissionSelector = ({ userId, branches, companies, permissions, o
                       className="p-2 bg-surface border border-border rounded-lg text-xs font-bold text-foreground focus:ring-2 focus:ring-primary outline-none"
                     >
                       <option value="none">Sem acesso</option>
-                      <option value="view">Visualizar</option>
-                      <option value="add_sale">Adicionar Venda</option>
-                      <option value="edit">Editar</option>
+                      <option value="view">Visualizar (Leitura)</option>
+                      <option value="reports_only">Somente Relatórios</option>
+                      <option value="add_sale">Operador (Add Vendas)</option>
+                      <option value="edit">Administrador da Unidade</option>
                     </select>
                   </div>
                 );

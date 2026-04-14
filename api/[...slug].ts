@@ -165,6 +165,293 @@ app.get("/api/facebook/ad-accounts", async (req, res) => {
   }
 });
 
+app.post("/api/facebook/create-campaign", async (req, res) => {
+  const { branchId, name, objective, dailyBudget } = req.body;
+  if (!branchId || !name || !objective) return res.status(400).json({ error: 'Missing params' });
+
+  try {
+    const { data: branch } = await supabaseAdmin.from('branches').select('*').eq('id', branchId).single();
+    if (!branch) throw new Error("Branch not found");
+
+    let token = branch.facebook_access_token;
+    if (!token) {
+      const { data: s } = await supabaseAdmin.from('settings').select('value').eq('key', 'facebook_access_token').single();
+      token = s?.value;
+    }
+    if (!token) throw new Error("Token not found");
+
+    // Get the first ad account ID if multiple
+    const adAccountId = (branch.facebook_ad_account_id || '').split(',')[0].trim().split('|')[0].replace('act_', '');
+    if (!adAccountId) throw new Error("Ad Account ID not configured for this branch");
+
+    const proof = getAppSecretProof(token);
+
+    const response = await axios.post(`https://graph.facebook.com/v22.0/act_${adAccountId}/campaigns`, {
+      name,
+      objective,
+      status: 'PAUSED',
+      daily_budget: dailyBudget,
+      special_ad_categories: '[]',
+      access_token: token,
+      appsecret_proof: proof
+    });
+
+    res.json(response.data);
+  } catch (err: any) {
+    console.error("Create Campaign Error:", err.response?.data || err.message);
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+  }
+});
+
+app.post("/api/facebook/update-campaign", async (req, res) => {
+  const { campaignId, branchId, dailyBudget, name } = req.body;
+  if (!campaignId || !branchId) return res.status(400).json({ error: 'Missing params' });
+
+  try {
+    const { data: branch } = await supabaseAdmin.from('branches').select('facebook_access_token').eq('id', branchId).single();
+    let token = branch?.facebook_access_token;
+    if (!token) {
+      const { data: s } = await supabaseAdmin.from('settings').select('value').eq('key', 'facebook_access_token').single();
+      token = s?.value;
+    }
+    if (!token) throw new Error("Token not found");
+
+    const proof = getAppSecretProof(token);
+    const updateData: any = {
+      access_token: token,
+      appsecret_proof: proof
+    };
+    if (dailyBudget !== undefined) updateData.daily_budget = dailyBudget;
+    if (name) updateData.name = name;
+
+    await axios.post(`https://graph.facebook.com/v22.0/${campaignId}`, updateData);
+
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("Update Campaign Error:", err.response?.data || err.message);
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+  }
+});
+
+app.post("/api/facebook/delete-campaign", async (req, res) => {
+  const { campaignId, branchId } = req.body;
+  if (!campaignId || !branchId) return res.status(400).json({ error: 'Missing params' });
+
+  try {
+    const { data: branch } = await supabaseAdmin.from('branches').select('facebook_access_token').eq('id', branchId).single();
+    let token = branch?.facebook_access_token;
+    if (!token) {
+      const { data: s } = await supabaseAdmin.from('settings').select('value').eq('key', 'facebook_access_token').single();
+      token = s?.value;
+    }
+    if (!token) throw new Error("Token not found");
+
+    const proof = getAppSecretProof(token);
+
+    await axios.delete(`https://graph.facebook.com/v22.0/${campaignId}`, {
+      params: { 
+        access_token: token, 
+        appsecret_proof: proof 
+      }
+    });
+
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("Delete Campaign Error:", err.response?.data || err.message);
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+  }
+});
+
+// --- ADMIN ROUTES ---
+
+const isAdminMiddleware = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.status(401).json({ error: 'No authorization header' });
+  const token = authHeader.split(' ')[1];
+  
+  try {
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+    if (error || !user) throw error;
+    
+    const isMaster = ['brtreino@gmail.com', 'trafegopagoprosul@gmail.com'].includes(user.email || '');
+    if (!isMaster && user.user_metadata?.role !== 'admin') {
+      return res.status(403).json({ error: 'Forbidden: Admin access required' });
+    }
+    
+    next();
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
+app.get("/api/admin/users", isAdminMiddleware, async (req, res) => {
+  try {
+    const { data: { users }, error } = await supabaseAdmin.auth.admin.listUsers();
+    if (error) throw error;
+    res.json(users);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/users", isAdminMiddleware, async (req, res) => {
+  try {
+    const { email, password, role } = req.body;
+    const { data: { user }, error } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { role: role || 'user' }
+    });
+    if (error) throw error;
+    res.json(user);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/users/:userId", isAdminMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/permissions", isAdminMiddleware, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin.from('user_branch_permissions').select('*');
+    if (error) throw error;
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/permissions", isAdminMiddleware, async (req, res) => {
+  try {
+    const { user_id, branch_id, permission_level, granular_permissions } = req.body;
+    const { data, error } = await supabaseAdmin
+      .from('user_branch_permissions')
+      .upsert({ 
+        user_id, 
+        branch_id, 
+        permission_level: permission_level || 'viewer', 
+        granular_permissions: granular_permissions || {} 
+      }, { onConflict: 'user_id,branch_id' })
+      .select()
+      .single();
+      
+    if (error) throw error;
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- ADMIN ROUTES ---
+
+const isAdminMiddleware = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.status(401).json({ error: 'No authorization header' });
+  const token = authHeader.split(' ')[1];
+  
+  try {
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+    if (error || !user) throw error;
+    
+    const isMaster = ['brtreino@gmail.com', 'trafegopagoprosul@gmail.com'].includes(user.email || '');
+    if (!isMaster && user.user_metadata?.role !== 'admin') {
+      return res.status(403).json({ error: 'Forbidden: Admin access required' });
+    }
+    
+    next();
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
+app.get("/api/admin/users", isAdminMiddleware, async (req, res) => {
+  try {
+    const { data: { users }, error } = await supabaseAdmin.auth.admin.listUsers();
+    if (error) throw error;
+    res.json(users);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/users", isAdminMiddleware, async (req, res) => {
+  try {
+    const { email, password, role } = req.body;
+    const { data: { user }, error } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { role: role || 'user' }
+    });
+    if (error) throw error;
+    
+    // Also update public.users table if it exists
+    await supabaseAdmin.from('users').upsert({ id: user.id, email: user.email, role: role || 'user' });
+    
+    res.json(user);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/admin/users/:userId", isAdminMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
+    if (error) throw error;
+    
+    // Cleanup permissions
+    await supabaseAdmin.from('user_branch_permissions').delete().eq('user_id', userId);
+    // Cleanup public.users
+    await supabaseAdmin.from('users').delete().eq('id', userId);
+    
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/permissions", isAdminMiddleware, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin.from('user_branch_permissions').select('*');
+    if (error) throw error;
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/permissions", isAdminMiddleware, async (req, res) => {
+  try {
+    const { user_id, branch_id, permission_level, granular_permissions } = req.body;
+    const { data, error } = await supabaseAdmin
+      .from('user_branch_permissions')
+      .upsert({ 
+        user_id, 
+        branch_id, 
+        permission_level: permission_level || 'viewer', 
+        granular_permissions: granular_permissions || {} 
+      }, { onConflict: 'user_id,branch_id' })
+      .select()
+      .single();
+      
+    if (error) throw error;
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Vercel normalization
 app.all("*", (req, res) => {
   res.status(404).json({ error: `Not found: ${req.url}` });

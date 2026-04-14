@@ -19,13 +19,12 @@ import { SettingsView } from '@/components/SettingsView';
 import { ReportsView } from '@/components/ReportsView';
 import { ConfigurationView } from '@/components/ConfigurationView';
 import { NotificationsView } from '@/components/NotificationsView';
-import { AssistantView } from '@/pages/AssistantView';
 import { MetaView } from '@/pages/MetaView';
 import { FacebookCallback } from '@/pages/FacebookCallback';
 // Removed SQLEditorView
 
 import { RegisterSaleModal } from '@/components/RegisterSaleModal';
-import { ChatWidget } from '@/components/ChatWidget';
+// Removed ChatWidget
 import { NewCampaignModal } from '@/components/NewCampaignModal';
 import { EditCampaignModal } from '@/components/EditCampaignModal';
 import { EditCompanyModal } from '@/components/EditCompanyModal';
@@ -125,7 +124,7 @@ const RealTimeBalanceKPI = ({ branch, campaigns, onSync, isSyncing, onConfigure 
     )}
     badge={!hasFacebookConfig ? 'Erro de Configuração' : undefined}
     badgeColor={!hasFacebookConfig ? 'red' : undefined}
-    animateBorder={true}
+    
     action={
       <div className="flex items-center gap-2">
         {!hasFacebookConfig && onConfigure && (
@@ -220,7 +219,25 @@ export default function App() {
   const [currentView, setView] = useState<View>('companies');
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
-  const canManageSelectedBranch = isAdmin || (selectedBranch && (myBranches || []).some(b => b && b.id === selectedBranch.id));
+  // Access Control Logic
+  const currentBranchPermission = (userPermissions || []).find(p => p.branch_id === selectedBranch?.id);
+  
+  const canManageSelectedBranch = isAdmin || currentBranchPermission?.permission_level === 'edit';
+  const canAddSale = isAdmin || ['edit', 'add_sale', 'operator'].includes(currentBranchPermission?.permission_level);
+  const isReportsOnly = !isAdmin && currentBranchPermission?.permission_level === 'reports_only' && !currentBranchPermission?.permission_level === 'view';
+  
+  // Update view logic based on permissions
+  useEffect(() => {
+    if (isReportsOnly && currentView !== 'reports') {
+      setView('reports');
+    }
+  }, [isReportsOnly, currentView]);
+
+  const canNavigateTo = (view: View) => {
+    if (isAdmin) return true;
+    if (isReportsOnly) return view === 'reports' || view === 'notifications';
+    return true; // Simplified for now
+  };
   const lastActivity = useRef(Date.now());
   const sessionStart = useRef(Date.now());
 
@@ -773,8 +790,10 @@ export default function App() {
         try {
           const { data: { session } } = await supabase.auth.getSession();
           if (session) {
-            await axios.delete(`/api/campaigns/${deletingCampaign.meta_campaign_id}`, {
-              params: { branchId: selectedBranch.id },
+            await axios.post(`/api/facebook/delete-campaign`, {
+              campaignId: deletingCampaign.meta_campaign_id,
+              branchId: selectedBranch.id
+            }, {
               headers: { Authorization: `Bearer ${session.access_token}` }
             });
           }
@@ -993,11 +1012,11 @@ export default function App() {
             };
             const metaObjective = objectiveMap[purpose] || 'OUTCOME_TRAFFIC';
             
-            const response = await axios.post(`/api/campaigns`, {
+            const response = await axios.post(`/api/facebook/create-campaign`, {
               branchId: selectedBranch.id,
               name,
               objective: metaObjective,
-              daily_budget: Math.round(spend * 100)
+              dailyBudget: Math.round(spend * 100)
             }, {
               headers: { Authorization: `Bearer ${session.access_token}` }
             });
@@ -1038,7 +1057,76 @@ export default function App() {
       console.error('Campaign creation error:', error);
       addToast('error', 'Erro ao criar campanha', 'Ocorreu um erro ao tentar criar a campanha.');
     }
-    };
+  };
+
+  const handleUpdateCampaign = async (id: number, name: string, purpose: string, spend: number) => {
+    if (!selectedBranch) return;
+    
+    try {
+      const campaign = campaigns.find(c => c.id === id);
+      if (!campaign) return;
+
+      // 1. Update in Meta if it's a Meta campaign
+      if (campaign.meta_campaign_id) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session) {
+            await axios.post(`/api/facebook/update-campaign`, {
+              campaignId: campaign.meta_campaign_id,
+              branchId: selectedBranch.id,
+              name,
+              dailyBudget: Math.round(spend * 100)
+            }, {
+              headers: { Authorization: `Bearer ${session.access_token}` }
+            });
+          }
+        } catch (err: any) {
+          console.error("Error updating meta campaign:", err);
+          addToast('error', 'Erro no Meta Ads', 'Não foi possível atualizar no Facebook, mas os dados locais podem ser salvos.');
+        }
+      }
+
+      // 2. Update in Supabase
+      const { data: updatedCampaign, error: campaignError } = await supabase
+        .from('campaigns')
+        .update({ name, purpose, spend })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (campaignError) throw campaignError;
+
+      // 3. Update branch daily rate
+      const updatedCampaigns = campaigns.map(c => c.id === id ? updatedCampaign : c);
+      const newDailyRate = calculateDailySpend(updatedCampaigns.filter(c => c.branch_id === selectedBranch.id));
+
+      const { data: updatedBranch, error: branchError } = await supabase
+        .from('branches')
+        .update({ daily_expense: newDailyRate })
+        .eq('id', selectedBranch.id)
+        .select()
+        .single();
+
+      if (branchError) throw branchError;
+
+      // 4. Update state
+      setCampaigns(updatedCampaigns);
+      setBranches(prev => prev.map(b => b.id === selectedBranch.id ? updatedBranch : b));
+      setSelectedBranch(updatedBranch);
+
+      setIsEditCampaignModalOpen(false);
+      addToast('success', 'Campanha atualizada', `"${name}" atualizada com sucesso.`);
+
+      await supabase.from('audit_log').insert({
+        action: 'Campanha editada',
+        detail: `"${name}" em ${selectedBranch.name} (Gasto: ${formatCurrency(spend)})`,
+        type: 'update'
+      });
+    } catch (error) {
+      console.error('Update campaign error:', error);
+      addToast('error', 'Erro ao atualizar', 'Ocorreu um erro ao salvar as alterações.');
+    }
+  };
 
   const generateInsights = async () => {
     if (!selectedBranch) {
@@ -1122,7 +1210,7 @@ export default function App() {
           icon={Wallet} 
           trend={12}
           trendLabel="vs mês anterior"
-          animateBorder={true}
+          
         />
         <KPI 
           label="ROI Médio" 
@@ -1130,13 +1218,13 @@ export default function App() {
           icon={TrendingUp} 
           trend={5}
           trendLabel="vs mês anterior"
-          animateBorder={true}
+          
         />
         <KPI 
           label="Investimento Diário" 
           value={formatCurrency((campaigns || []).reduce((acc, c) => acc + (c.spend || 0), 0))} 
           icon={DollarSign} 
-          animateBorder={true}
+          
         />
         <KPI 
           label="Novas Vendas" 
@@ -1144,7 +1232,7 @@ export default function App() {
           icon={Users} 
           trend={-2}
           trendLabel="vs ontem"
-          animateBorder={true}
+          
         />
       </div>
 
@@ -1175,7 +1263,7 @@ export default function App() {
           renderItem={(company, isExpanded) => (
             <Card 
               onClick={() => handleSelectCompany(company)} 
-              animateBorder={true} 
+               
               isExpanded={isExpanded}
               layout="expand"
               hoverable={false}
@@ -1233,7 +1321,7 @@ export default function App() {
                   transition={{ duration: 0.5, ease: "easeOut" }}
                   className="min-h-[200px]"
                 >
-                  <Card onClick={() => handleSelectCompany(company)} animateBorder={true}>
+                  <Card onClick={() => handleSelectCompany(company)} >
               <div className="flex items-start justify-between mb-6">
                 <div className="flex items-center gap-4">
                   <div className="w-12 h-12 rounded-2xl bg-primary/5 dark:bg-primary/5 border border-primary/10 flex items-center justify-center overflow-hidden">
@@ -1461,10 +1549,10 @@ export default function App() {
           </button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <KPI label="Total de Filiais" value={branchesForCompany.length.toString()} icon={Building2} animateBorder={true} />
-          <KPI label="Investimento Diário" value={formatCurrency(totalDailyInvestment)} icon={DollarSign} animateBorder={true} />
-          <KPI label="ROI Consolidado" value={formatPercent(totalRoi)} icon={TrendingUp} animateBorder={true} />
-          <KPI label="Saldo Total" value={formatCurrency(totalBalance)} icon={Wallet} animateBorder={true} />
+          <KPI label="Total de Filiais" value={branchesForCompany.length.toString()} icon={Building2}  />
+          <KPI label="Investimento Diário" value={formatCurrency(totalDailyInvestment)} icon={DollarSign}  />
+          <KPI label="ROI Consolidado" value={formatPercent(totalRoi)} icon={TrendingUp}  />
+          <KPI label="Saldo Total" value={formatCurrency(totalBalance)} icon={Wallet}  />
         </div>
 
 
@@ -1495,7 +1583,7 @@ export default function App() {
                   <Card 
                     className="bg-muted border-border cursor-pointer"
                     onClick={() => handleSelectBranch(branch)}
-                    animateBorder={true}
+                    
                   >
                     <h4 className="font-bold text-foreground">{branch.name}</h4>
                     <p className="text-sm text-muted-foreground">Vendas: {(sales || []).filter(s => s && s.branch_id === branch.id).length}</p>
@@ -1658,156 +1746,161 @@ export default function App() {
             }
           }}
         />
-        <KPI label="ROI Total" value={formatPercent(roi)} icon={TrendingUp} color="sky" animateBorder={true} />
-        <KPI label="Gasto Total" value={formatCurrency(dailySpend)} icon={DollarSign} animateBorder={true} />
-        <KPI label="Ticket Médio" value={formatCurrency(0)} icon={Users} animateBorder={true} />
+        <KPI label="ROI Total" value={formatPercent(roi)} icon={TrendingUp} color="sky" animateBorder={false} />
+        <KPI label="Gasto Total" value={formatCurrency(dailySpend)} icon={DollarSign} animateBorder={false} />
+        <KPI label="Ticket Médio" value={formatCurrency(0)} icon={Users} animateBorder={false} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-4">
-            <h3 className="text-lg font-bold tracking-tight">Campanhas Ads</h3>
-            <div className="flex items-center gap-4 w-full sm:w-auto">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-6">
+            <h3 className="text-xl font-bold tracking-tight text-foreground">Campanhas Ads</h3>
+            <div className="flex items-center gap-3 w-full sm:w-auto">
               <div className="flex items-center gap-2 flex-1 sm:flex-none">
-                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest whitespace-nowrap">Status:</span>
                 <select 
                   value={campaignStatusFilter}
                   onChange={(e) => setCampaignStatusFilter(e.target.value as any)}
-                  className="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs font-bold focus:outline-none focus:border-primary transition-all w-full"
+                  className="bg-surface border border-border rounded-xl px-4 py-2 text-sm font-bold focus:outline-none focus:border-primary transition-all w-full"
                 >
-                  <option value="all">Todas</option>
-                  <option value="active">Ativas</option>
-                  <option value="paused">Pausadas</option>
+                  <option value="all">Todas as Campanhas</option>
+                  <option value="active">Apenas Ativas</option>
+                  <option value="paused">Apenas Pausadas</option>
                 </select>
               </div>
               {canManageSelectedBranch && (
-                <button onClick={() => setIsNewCampaignModalOpen(true)} className="btn-primary flex items-center gap-2 text-xs h-9">
-                  <Plus size={16} />
-                  <span className="hidden sm:inline">Nova Campanha</span>
-                  <span className="sm:hidden">Nova</span>
+                <button 
+                  onClick={() => setIsNewCampaignModalOpen(true)} 
+                  className="btn-primary flex items-center gap-2 h-10 px-4 min-w-fit active:scale-95 transition-transform"
+                >
+                  <Plus size={18} />
+                  <span className="font-bold">Nova</span>
                 </button>
               )}
             </div>
           </div>
           
-          <Card className="p-0 overflow-hidden" animateBorder={true}>
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="bg-muted border-b border-border">
-                  <th className="px-6 py-4 font-bold text-muted-foreground uppercase tracking-widest text-[10px]">Campanha</th>
-                  <th className="px-6 py-4 font-bold text-muted-foreground uppercase tracking-widest text-[10px]">Propósito</th>
-                  <th className="px-6 py-4 font-bold text-muted-foreground uppercase tracking-widest text-[10px]">Gasto Diário</th>
-                  <th className="px-6 py-4 font-bold text-muted-foreground uppercase tracking-widest text-[10px]">Status</th>
-                  <th className="px-6 py-4 font-bold text-muted-foreground uppercase tracking-widest text-[10px] text-right">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {branchCampaigns
-                  .filter(c => campaignStatusFilter === 'all' || c.status === campaignStatusFilter)
-                  .length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground italic">
-                      {campaignStatusFilter === 'all' ? 'Nenhuma campanha cadastrada' : `Nenhuma campanha ${campaignStatusFilter === 'active' ? 'ativa' : 'pausada'} encontrada`}
-                    </td>
-                  </tr>
-                ) : (
-                  branchCampaigns
-                    .filter(c => campaignStatusFilter === 'all' || c.status === campaignStatusFilter)
-                    .map(c => (
-                    <motion.tr 
-                      key={c.id} 
-                      layout
-                      initial={false}
-                      animate={{ 
-                        opacity: c.status === 'paused' ? 0.75 : 1,
-                        filter: c.status === 'paused' ? 'grayscale(1)' : 'grayscale(0)',
-                        backgroundColor: c.status === 'paused' ? 'rgba(241, 245, 249, 0.4)' : 'transparent',
-                        boxShadow: c.status === 'paused' ? 'inset 0 0 20px rgba(0,0,0,0.02)' : 'none'
-                      }}
-                      transition={{ duration: 0.5, ease: "anticipate" }}
-                      onClick={() => {
-                        setSelectedCampaignForModal(c);
-                        setIsEditCampaignModalOpen(true);
-                      }}
-                      className={cn(
-                        "group transition-all cursor-pointer border-l-4 relative overflow-hidden",
-                        c.status === 'paused' 
-                          ? "border-border bg-muted/30" 
-                          : "border-emerald-500 hover:bg-muted"
-                      )}
-                    >
-                      {c.status === 'paused' && (
-                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-muted/5 to-transparent pointer-events-none" />
-                      )}
-                      <td className="px-6 py-4 font-bold text-foreground relative z-10">{c.name}</td>
-                      <td className="px-6 py-4 relative z-10">
-                        <Badge variant={c.status === 'paused' ? 'neutral' : 'primary'}>
-                          {c.purpose}
-                        </Badge>
-                      </td>
-                      <td className="px-6 py-4 font-medium text-foreground relative z-10">{formatCurrency(c.spend)}</td>
-                      <td className="px-6 py-4 relative z-10">
-                        <Tooltip content={
-                          c.status === 'paused' 
-                            ? 'Esta campanha está PAUSADA. Ela não gera novos gastos nem tráfego para a filial, e seu valor de investimento diário é ignorado no cálculo de saldo em tempo real.' 
-                            : 'Esta campanha está ATIVA. Ela está gerando tráfego e consumindo o saldo da filial em tempo real conforme o gasto diário configurado.'
-                        }>
-                          <span className={cn(
-                            "text-xs font-bold uppercase tracking-widest flex items-center gap-2 cursor-help",
-                            c.status === 'paused' ? "text-muted-foreground" : "text-emerald-500"
-                          )}>
-                            <div className={cn("w-2 h-2 rounded-full", c.status === 'paused' ? "bg-muted-foreground" : "bg-emerald-500 animate-pulse")} />
-                            {c.status === 'paused' ? 'Pausada' : 'Ativa'}
-                          </span>
-                        </Tooltip>
-                      </td>
-                      <td className="px-6 py-4 text-right relative z-10">
-                        <div className="flex justify-end items-center gap-3">
-                          {/* Status Toggle Switch */}
-                          {canManageSelectedBranch && (
-                            <>
+          <div className="space-y-4">
+            {/* Desktop Table - Hidden on Mobile */}
+            <div className="hidden md:block">
+              <Card className="p-0 overflow-hidden" animateBorder={false}>
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="bg-muted border-b border-border">
+                      <th className="px-6 py-4 font-bold text-muted-foreground uppercase tracking-widest text-[10px]">Campanha</th>
+                      <th className="px-6 py-4 font-bold text-muted-foreground uppercase tracking-widest text-[10px]">Propósito</th>
+                      <th className="px-6 py-4 font-bold text-muted-foreground uppercase tracking-widest text-[10px]">Gasto Diário</th>
+                      <th className="px-6 py-4 font-bold text-muted-foreground uppercase tracking-widest text-[10px]">Status</th>
+                      <th className="px-6 py-4 font-bold text-muted-foreground uppercase tracking-widest text-[10px] text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {branchCampaigns.filter(c => campaignStatusFilter === 'all' || c.status === campaignStatusFilter).length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground italic">Nenhuma campanha encontrada</td>
+                      </tr>
+                    ) : (
+                      branchCampaigns
+                        .filter(c => campaignStatusFilter === 'all' || c.status === campaignStatusFilter)
+                        .map(c => (
+                        <motion.tr 
+                          key={c.id} 
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          className={cn(
+                            "group transition-all cursor-pointer border-l-4",
+                            c.status === 'paused' ? "border-transparent bg-muted/20 opacity-70" : "border-emerald-500 hover:bg-muted"
+                          )}
+                          onClick={() => { setSelectedCampaignForModal(c); setIsEditCampaignModalOpen(true); }}
+                        >
+                          <td className="px-6 py-4 font-bold text-foreground">{c.name}</td>
+                          <td className="px-6 py-4"><Badge variant={c.status === 'paused' ? 'neutral' : 'primary'}>{c.purpose}</Badge></td>
+                          <td className="px-6 py-4 font-medium text-foreground">{formatCurrency(c.spend)}</td>
+                          <td className="px-6 py-4 font-bold text-[10px] uppercase tracking-widest">
+                            <span className={c.status === 'paused' ? "text-muted-foreground" : "text-emerald-500 animate-pulse"}>
+                              {c.status === 'paused' ? '● Pausada' : '● Ativa'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex justify-end items-center gap-4">
                               <button 
                                 onClick={(e) => { e.stopPropagation(); handleToggleCampaignStatus(c); }}
-                                className={cn(
-                                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none",
-                                  c.status === 'paused' ? "bg-muted" : "bg-emerald-500"
-                                )}
-                                title={c.status === 'paused' ? "Ativar" : "Pausar"}
+                                className={cn("relative inline-flex h-6 w-11 items-center rounded-full transition-colors", c.status === 'paused' ? "bg-muted" : "bg-emerald-500")}
                               >
-                                <span
-                                  className={cn(
-                                    "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
-                                    c.status === 'paused' ? "translate-x-1" : "translate-x-6"
-                                  )}
-                                />
+                                <span className={cn("inline-block h-4 w-4 transform rounded-full bg-white transition-transform", c.status === 'paused' ? "translate-x-1" : "translate-x-6")} />
                               </button>
+                            </div>
+                          </td>
+                        </motion.tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </Card>
+            </div>
 
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                                <button 
-                                  onClick={(e) => { 
-                                    e.stopPropagation(); 
-                                    setSelectedCampaignForModal(c);
-                                    setIsEditCampaignModalOpen(true);
-                                  }} 
-                                  className="p-1.5 rounded-lg hover:bg-primary/10 text-primary transition-all"
-                                  title="Editar"
-                                >
-                                  <Edit2 size={14} />
-                                </button>
-                                <button onClick={(e) => { e.stopPropagation(); handleDeleteCampaign(c); }} className="p-1.5 rounded-lg hover:bg-rose-500/10 text-rose-400 transition-all" title="Excluir"><Trash2 size={14} /></button>
-                              </div>
-                            </>
-                          )}
+            {/* Mobile Card View - Shown on Mobile */}
+            <div className="md:hidden space-y-3 pb-4">
+              {branchCampaigns.filter(c => campaignStatusFilter === 'all' || c.status === campaignStatusFilter).length === 0 ? (
+                <div className="p-8 text-center text-muted-foreground italic bg-surface/50 rounded-2xl border border-dashed border-border">
+                  Nenhuma campanha encontrada
+                </div>
+              ) : (
+                branchCampaigns
+                  .filter(c => campaignStatusFilter === 'all' || c.status === campaignStatusFilter)
+                  .map(c => (
+                  <motion.div 
+                    key={c.id}
+                    className={cn(
+                      "p-4 rounded-2xl border bg-surface/50 flex flex-col gap-4 relative overflow-hidden transition-all active:scale-[0.98]",
+                      c.status === 'paused' ? "border-border/50 opacity-60" : "border-emerald-500/30 bg-emerald-500/5 shadow-sm"
+                    )}
+                    onClick={() => { setSelectedCampaignForModal(c); setIsEditCampaignModalOpen(true); }}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex flex-col gap-1">
+                        <span className="font-bold text-foreground leading-tight">{c.name}</span>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Badge variant={c.status === 'paused' ? 'neutral' : 'primary'} className="text-[9px] px-1.5">{c.purpose}</Badge>
+                          <span className="text-[10px] font-bold text-muted-foreground tracking-widest">{formatCurrency(c.spend)}/dia</span>
                         </div>
-                      </td>
-                    </motion.tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </Card>
+                      </div>
+                      
+                      <div className="flex flex-col items-end gap-3">
+                        {/* Mobile Toggle - Huge touch target */}
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); handleToggleCampaignStatus(c); }}
+                          className={cn(
+                            "relative inline-flex h-10 w-16 items-center rounded-full transition-colors active:scale-90",
+                            c.status === 'paused' ? "bg-muted/80" : "bg-emerald-500"
+                          )}
+                        >
+                          <span className={cn(
+                            "inline-block h-8 w-8 transform rounded-full bg-white shadow-md transition-transform",
+                            c.status === 'paused' ? "translate-x-1" : "translate-x-7"
+                          )} />
+                        </button>
+                      </div>
+                    </div>
 
-          <Card className="p-6" animateBorder={true}>
+                    <div className="flex items-center justify-between border-t border-border/20 pt-3">
+                      <span className={cn(
+                        "text-[10px] font-black uppercase tracking-[0.15em]",
+                        c.status === 'paused' ? "text-muted-foreground" : "text-emerald-500"
+                      )}>
+                        {c.status === 'paused' ? 'Pausada no Meta' : 'Rodando Agora'}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button className="p-2 text-primary bg-primary/10 rounded-lg"><Edit2 size={14} /></button>
+                        <button onClick={(e) => { e.stopPropagation(); handleDeleteCampaign(c); }} className="p-2 text-rose-500 bg-rose-500/10 rounded-lg"><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <Card className="p-6" >
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-bold tracking-tight uppercase tracking-widest text-foreground">Evolução do Saldo</h3>
               <Badge variant="primary">Histórico</Badge>
@@ -1827,7 +1920,7 @@ export default function App() {
             </button>
           </div>
 
-          <Card className="p-0 overflow-hidden" animateBorder={true}>
+          <Card className="p-0 overflow-hidden" >
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="bg-muted border-b border-border">
@@ -1966,7 +2059,7 @@ export default function App() {
             </div>
           )}
 
-          <Card className="p-6 mt-8" animateBorder={true}>
+          <Card className="p-6 mt-8" >
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-bold tracking-tight uppercase tracking-widest text-foreground">Evolução do Saldo</h3>
               <Badge variant="primary">Histórico</Badge>
@@ -1980,7 +2073,7 @@ export default function App() {
         </div>
 
         <div className="space-y-6">
-          <Card className="bg-gradient-to-br from-primary/10 to-primary/10 border-primary/20 shadow-[0_0_30px_rgba(0,212,255,0.1)]" animateBorder={true}>
+          <Card className="bg-gradient-to-br from-primary/10 to-primary/10 border-primary/20 shadow-[0_0_30px_rgba(0,212,255,0.1)]" >
             <h4 className="font-bold text-lg mb-4 flex items-center gap-2 text-foreground uppercase tracking-widest">
               <Clock size={20} className="text-primary" />
               Previsão de ROI
@@ -2124,11 +2217,6 @@ export default function App() {
         setShowSettingsPopover={setShowSettingsPopover}
         settings={settings}
         onSaveSettings={handleSaveSettings}
-        onInsightsClick={() => {
-          setIsChatWidgetOpen(prev => !prev);
-          setShowNotificationsPopover(false);
-          setShowSettingsPopover(false);
-        }}
         userName={userName}
         userAvatar={userAvatar}
         onProfileClick={() => setIsEditProfileModalOpen(true)}
@@ -2136,10 +2224,11 @@ export default function App() {
         onToggleTheme={setThemeDirectly}
         onLogout={handleLogout}
         isAdmin={isAdmin}
+        isReportsOnly={isReportsOnly}
         branches={branches}
       >
         {/* Low Balance Banner */}
-        {showCriticalBalanceBanner && criticalNotifications.length > 0 && (
+        {showCriticalBalanceBanner && criticalNotifications.length > 0 && !isReportsOnly && (
           <motion.div 
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -2181,30 +2270,26 @@ export default function App() {
         <AnimatePresence mode="wait">
           <motion.div
             key={location.pathname}
-            initial={{ opacity: 0, x: 50, scale: 0.95 }}
-            animate={{ opacity: 1, x: 0, scale: 1 }}
-            exit={{ opacity: 0, x: -50, scale: 0.95 }}
-            transition={{ 
-              duration: 0.4, 
-              ease: "backOut"
-            }}
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -5 }}
+            transition={{ duration: 0.15 }}
           >
             <Routes>
-              <Route path="/companies" element={renderCompanies()} />
-              <Route path="/companies/:companyId" element={renderCompany()} />
-              <Route path="/companies/:companyId/branches/:branchId" element={renderBranch()} />
-              <Route path="/eagle" element={<EagleView companies={companies} branches={branches} campaigns={campaigns} sales={sales} />} />
+              <Route path="/companies" element={canNavigateTo('companies') ? renderCompanies() : <Navigate to="/reports" />} />
+              <Route path="/companies/:companyId" element={canNavigateTo('companies') ? renderCompany() : <Navigate to="/reports" />} />
+              <Route path="/companies/:companyId/branches/:branchId" element={canNavigateTo('companies') ? renderBranch() : <Navigate to="/reports" />} />
+              <Route path="/eagle" element={canNavigateTo('eagle') ? <EagleView companies={companies} branches={branches} campaigns={campaigns} sales={sales} /> : <Navigate to="/reports" />} />
               <Route path="/reports" element={<ReportsView branches={isAdmin ? branches : myBranches} companies={companies} campaigns={campaigns} branchesPerPage={settings.branchesPerPage} />} />
-              <Route path="/assistant" element={<AssistantView />} />
-              <Route path="/facebook" element={<MetaView />} />
-              <Route path="/facebook/callback" element={<MetaView />} />
-              <Route path="/history" element={<AuditLog logs={auditLogs} />} />
+              <Route path="/facebook" element={isAdmin ? <MetaView /> : <Navigate to="/" />} />
+              <Route path="/facebook/callback" element={isAdmin ? <MetaView /> : <Navigate to="/" />} />
+              <Route path="/history" element={canNavigateTo('history') ? <AuditLog logs={auditLogs} /> : <Navigate to="/reports" />} />
               <Route path="/users" element={isAdmin ? <UsersView /> : <Navigate to="/" />} />
               <Route path="/settings" element={isAdmin ? <SettingsView settings={settings} onSave={handleSaveSettings} /> : <Navigate to="/" />} />
-<Route path="/configuration" element={isAdmin ? <ConfigurationView /> : <Navigate to="/" />} />
+              <Route path="/configuration" element={isAdmin ? <ConfigurationView /> : <Navigate to="/" />} />
               <Route path="/notifications" element={
                 <div className="max-w-4xl mx-auto">
-                  <Card className="p-8" animateBorder={true}>
+                  <Card className="p-8" >
                     <div className="flex items-center justify-between mb-8">
                       <h2 className="text-2xl font-bold text-foreground">Todas as Notificações</h2>
                       <button 
@@ -2672,84 +2757,9 @@ export default function App() {
             setSelectedCampaignForModal(null);
           }}
           campaign={selectedCampaignForModal}
-          onUpdateCampaign={async (id, name, purpose, spend) => {
-            if (!canManageSelectedBranch) {
-              addToast('error', 'Acesso negado', 'Você não tem permissão para editar esta campanha.');
-              return;
-            }
-            if (!selectedBranch) return;
-            try {
-              const newCampaigns = (campaigns || []).map(c => c && c.id === id ? { ...c, name, purpose, spend } : c);
-              const newDailyRate = calculateDailySpend(newCampaigns.filter(c => c && c.branch_id === selectedBranch.id));
-
-              // Update branch daily_expense in DB
-              const { data: updatedBranch, error } = await supabase
-                .from('branches')
-                .update({ 
-                  daily_expense: newDailyRate,
-                  updated_at: new Date().toISOString()
-                })
-                .eq('id', selectedBranch.id)
-                .select()
-                .single();
-
-              if (error) throw error;
-
-              const campaignToUpdate = (campaigns || []).find(c => c && c.id === id);
-              if (campaignToUpdate?.meta_campaign_id) {
-                try {
-                  const { data: { session } } = await supabase.auth.getSession();
-                  if (session) {
-                    await axios.patch(`/api/campaigns/${campaignToUpdate.meta_campaign_id}`, {
-                      branchId: selectedBranch.id,
-                      name: name,
-                      daily_budget: Math.round(spend * 100) // Convert to cents for Meta
-                    }, {
-                      headers: { Authorization: `Bearer ${session.access_token}` }
-                    });
-                  }
-                } catch (err: any) {
-                  console.error("Error updating meta campaign:", err);
-                  addToast('error', 'Erro no Meta Ads', 'Não foi possível atualizar a campanha no Facebook.');
-                  return; // Stop update if Meta fails
-                }
-              }
-
-              const { data: updatedCampaignData, error: updateCampaignError } = await supabase
-                .from('campaigns')
-                .update({ name, purpose, spend })
-                .eq('id', id)
-                .select()
-                .single();
-              
-              if (updateCampaignError) throw updateCampaignError;
-              
-              setCampaigns(prev => prev.map(c => c.id === id ? updatedCampaignData : c));
-              setBranches(prev => prev.map(b => b.id === selectedBranch.id ? updatedBranch : b));
-              setSelectedBranch(updatedBranch);
-              setIsEditCampaignModalOpen(false);
-              setSelectedCampaignForModal(null);
-              addToast('success', 'Campanha atualizada', `"${name}" foi atualizada com sucesso.`);
-              
-              await supabase.from('audit_log').insert({
-                action: 'Campanha editada',
-                detail: `Campanha "${name}" em ${selectedBranch.name}`,
-                type: 'update'
-              });
-            } catch (error) {
-              console.error('Campaign update error:', error);
-              addToast('error', 'Erro ao atualizar', 'Não foi possível atualizar a campanha.');
-            }
-          }}
+          onUpdateCampaign={handleUpdateCampaign}
         />
       )}
-
-      <ChatWidget 
-        pageContext={getPageContextData().context} 
-        dataSummary={getPageContextData().dataSummary} 
-        isOpen={isChatWidgetOpen}
-        onClose={() => setIsChatWidgetOpen(false)}
-      />
 
       {editingCompany && (
         <EditCompanyModal
