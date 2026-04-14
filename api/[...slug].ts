@@ -165,4 +165,16 @@ app.all("*", (req, res) => {
   res.status(404).json({ error: `Not found: ${req.url}` });
 });
 
+// Automatic Sync Background Task (15 minutes)
+async function autoSync() {
+  console.log("[AUTO-SYNC] Iniciando sincronização programada (15 min)...");
+  const { data: branches } = await supabaseAdmin.from('branches').select('*');
+  if (branches) {
+    for (const b of branches) await syncBranchBalance(supabaseAdmin, b);
+  }
+}
+
+// Start the interval
+setInterval(autoSync, 900000);
+
 export default app;

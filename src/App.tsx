@@ -597,26 +597,18 @@ export default function App() {
     setIsSyncingBalance(true);
     addToast('info', 'Sincronizando', `Buscando saldo real do Facebook para ${selectedBranch.name}...`);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-      
-      const response = await axios.post('/api/facebook/sync', 
-        { branchId: selectedBranch.id },
-        { headers: { Authorization: `Bearer ${session.access_token}` } }
-      );
+      const response = await axios.get(`/api/sync-branch?branchId=${selectedBranch.id}`);
       
       if (response.data.success) {
-        // Update local branches state
         setBranches(prev => prev.map(b => 
           b.id === selectedBranch.id ? { ...b, balance: response.data.balance } : b
         ));
-        // Also update selected branch to refresh the UI immediately
         setSelectedBranch(prev => prev ? { ...prev, balance: response.data.balance } : null);
-        addToast('success', 'Sincronizado', 'O saldo foi atualizado com sucesso.');
+        addToast('success', 'Sincronizado', `Saldo atualizado: R$ ${response.data.balance.toFixed(2)}`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error syncing individual branch balance:', err);
-      addToast('error', 'Erro ao sincronizar', 'Não foi possível atualizar o saldo agora.');
+      addToast('error', 'Erro ao sincronizar', err.response?.data?.error || 'Não foi possível atualizar o saldo agora.');
     } finally {
       setIsSyncingBalance(false);
     }
