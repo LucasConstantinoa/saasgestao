@@ -33,112 +33,118 @@ export const BranchRealTimeDashboard: React.FC<{
   const handleSyncBranch = async (branchId: number) => {
     setSyncingBranches(prev => new Set(prev).add(branchId));
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      // Strategy 1: Try API route (server-side, no CORS issues)
-      try {
-        if (session) {
-          const response = await axios.post('/api/facebook/sync', 
-            { branchId },
-            { headers: { Authorization: `Bearer ${session.access_token}` }, timeout: 15000 }
-          );
-          if (response.data.success) {
-            setBranches(prev => prev.map(b =>
-              b.id === branchId ? { ...b, balance: response.data.balance, updated_at: new Date().toISOString() } : b
-            ));
-            addToast('success', 'Sincronizado', `Saldo atualizado: R$ ${(response.data.balance || 0).toFixed(2)}`);
-            return;
-          }
-        }
-      } catch (apiErr: any) {
-        console.warn('API route failed, trying direct Facebook call...', apiErr.message);
+      // 1. Get branch data from Supabase
+      const { data: branch } = await supabase
+        .from('branches')
+        .select('id, name, facebook_ad_account_id, facebook_access_token')
+        .eq('id', branchId)
+        .single();
+
+      if (!branch?.facebook_ad_account_id) {
+        addToast('warning', 'Sem conta', 'Filial sem conta de anúncio configurada.');
+        return;
       }
 
-      // Strategy 2: Try direct Facebook Graph API call (may work if CORS allows)
-      try {
-        const { data: branch } = await supabase
-          .from('branches')
-          .select('id, name, facebook_ad_account_id, facebook_access_token')
-          .eq('id', branchId)
-          .single();
+      // 2. Get token
+      let token = branch.facebook_access_token;
+      if (!token) {
+        const { data: s } = await supabase.from('settings').select('value').eq('key', 'facebook_access_token').single();
+        token = s?.value;
+      }
+      if (!token) { addToast('error', 'Sem token', 'Token do Facebook não encontrado.'); return; }
 
-        if (!branch?.facebook_ad_account_id) {
-          addToast('warning', 'Sem conta', 'Filial sem conta de anúncio configurada.');
-          return;
-        }
+      // 3. Parse ad account IDs
+      const adAccountIds = branch.facebook_ad_account_id.split(',')
+        .map((id: string) => id.trim().split('|')[0].replace('act_', '')).filter(Boolean);
 
-        let token = branch.facebook_access_token;
-        if (!token) {
-          const { data: settingsRow } = await supabase.from('settings').select('value').eq('key', 'facebook_access_token').single();
-          token = settingsRow?.value;
-        }
-        if (!token) {
-          addToast('error', 'Sem token', 'Token do Facebook não encontrado.');
-          return;
-        }
+      // 4. Call Facebook Graph API directly — prioritize display_string
+      let totalBalance = 0;
 
-        const adAccountIds = branch.facebook_ad_account_id.split(',')
-          .map((id: string) => id.trim().split('|')[0].replace('act_', ''))
-          .filter(Boolean);
-
-        let totalBalance = 0;
-        const parseDisplayValue = (str: string | undefined) => {
-          if (!str) return 0;
-          const cleaned = str.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
-          return parseFloat(cleaned) || 0;
-        };
-
-        for (const cleanId of adAccountIds) {
-          const response = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+      for (const cleanId of adAccountIds) {
+        try {
+          const res = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
             params: {
               access_token: token,
               fields: 'balance,is_prepaid_account,funding_source_details{id,display_string,balance,type},spend_cap,amount_spent,total_prepaid_balance'
             },
             timeout: 10000
           });
-          const data = response.data;
-          const isPrepaid = data.is_prepaid_account || !!(data.funding_source_details && (data.funding_source_details.balance || data.funding_source_details.display_string));
-          let accountBalance = 0;
-          if (isPrepaid) {
-            const fundingVal = data.funding_source_details?.balance ? parseFloat(data.funding_source_details.balance) / 100 : 0;
-            const prepaidVal = data.total_prepaid_balance ? parseFloat(data.total_prepaid_balance) / 100 : 0;
-            const displayVal = parseDisplayValue(data.funding_source_details?.display_string);
-            accountBalance = Math.abs(fundingVal || prepaidVal || displayVal || (parseFloat(data.balance || "0") / 100));
-          } else {
-            const rawBal = parseFloat(data.balance || "0") / 100;
-            const spent = parseFloat(data.amount_spent || "0") / 100;
-            const cap = parseFloat(data.spend_cap || "0") / 100;
-            accountBalance = cap > 0 ? Math.max(0, cap - spent) : -rawBal;
+          const d = res.data;
+          console.log(`[SYNC] Account ${cleanId}:`, JSON.stringify(d));
+
+          // PRIORITY 1: funding_source_details.display_string (user's preferred source)
+          const displayStr = d.funding_source_details?.display_string;
+          if (displayStr) {
+            // Parse "R$ 1.234,56" or "$1,234.56" etc.
+            const cleaned = displayStr.replace(/[^\d,.-]/g, '');
+            // Detect format: if has both . and , → Brazilian (1.234,56) or US (1,234.56)
+            let numericValue = 0;
+            if (cleaned.includes(',') && cleaned.includes('.')) {
+              // Check which comes last — that's the decimal separator
+              const lastComma = cleaned.lastIndexOf(',');
+              const lastDot = cleaned.lastIndexOf('.');
+              if (lastComma > lastDot) {
+                // Brazilian: 1.234,56
+                numericValue = parseFloat(cleaned.replace(/\./g, '').replace(',', '.')) || 0;
+              } else {
+                // US: 1,234.56
+                numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
+              }
+            } else if (cleaned.includes(',')) {
+              // Could be "1234,56" (decimal) or "1,234" (thousands)
+              const parts = cleaned.split(',');
+              if (parts[parts.length - 1].length === 2) {
+                numericValue = parseFloat(cleaned.replace(',', '.')) || 0;
+              } else {
+                numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
+              }
+            } else {
+              numericValue = parseFloat(cleaned) || 0;
+            }
+            totalBalance += Math.abs(numericValue);
+            console.log(`[SYNC] ${cleanId}: display_string="${displayStr}" → R$ ${numericValue}`);
+            continue; // Got balance from display_string, skip other calculations
           }
-          totalBalance += accountBalance;
+
+          // PRIORITY 2: funding_source_details.balance (raw cents)
+          if (d.funding_source_details?.balance) {
+            const val = Math.abs(parseFloat(d.funding_source_details.balance) / 100);
+            totalBalance += val;
+            console.log(`[SYNC] ${cleanId}: funding_source.balance → R$ ${val}`);
+            continue;
+          }
+
+          // PRIORITY 3: total_prepaid_balance
+          if (d.total_prepaid_balance && parseFloat(d.total_prepaid_balance) !== 0) {
+            const val = Math.abs(parseFloat(d.total_prepaid_balance) / 100);
+            totalBalance += val;
+            continue;
+          }
+
+          // PRIORITY 4: Postpaid calculation (spend_cap - amount_spent) or raw balance
+          const rawBal = parseFloat(d.balance || "0") / 100;
+          const spent = parseFloat(d.amount_spent || "0") / 100;
+          const cap = parseFloat(d.spend_cap || "0") / 100;
+          const calcBal = cap > 0 ? Math.max(0, cap - spent) : Math.abs(rawBal);
+          totalBalance += calcBal;
+        } catch (accErr: any) {
+          console.error(`[SYNC] Erro conta ${cleanId}:`, accErr.response?.data?.error?.message || accErr.message);
         }
-
-        // Save to Supabase
-        await supabase.from('branches').update({ balance: totalBalance, updated_at: new Date().toISOString() }).eq('id', branchId);
-        setBranches(prev => prev.map(b => b.id === branchId ? { ...b, balance: totalBalance } : b));
-        addToast('success', 'Sincronizado (direto)', `Saldo: R$ ${totalBalance.toFixed(2)}`);
-        return;
-      } catch (fbErr: any) {
-        console.warn('Direct Facebook call also failed (CORS?):', fbErr.message);
       }
 
-      // Strategy 3: Fallback - just reload from Supabase (balance from last server sync)
-      const { data: freshBranch } = await supabase.from('branches').select('balance, updated_at').eq('id', branchId).single();
-      if (freshBranch) {
-        setBranches(prev => prev.map(b => b.id === branchId ? { ...b, balance: freshBranch.balance, updated_at: freshBranch.updated_at } : b));
-        addToast('info', 'Saldo do cache', `Saldo mais recente do banco: R$ ${(freshBranch.balance || 0).toFixed(2)}`);
-      } else {
-        addToast('error', 'Erro', 'Não foi possível obter o saldo de nenhuma fonte.');
-      }
+      // 5. Save to Supabase & update UI
+      await supabase.from('branches').update({ balance: totalBalance, updated_at: new Date().toISOString() }).eq('id', branchId);
+      setBranches(prev => prev.map(b => b.id === branchId ? { ...b, balance: totalBalance } : b));
+      addToast('success', 'Sincronizado', `${branch.name}: R$ ${totalBalance.toFixed(2)}`);
+
     } catch (err: any) {
       console.error('Sync error:', err);
+      // Fallback: reload from Supabase
+      const { data: fb } = await supabase.from('branches').select('balance').eq('id', branchId).single();
+      if (fb) setBranches(prev => prev.map(b => b.id === branchId ? { ...b, balance: fb.balance } : b));
       addToast('error', 'Erro', err.message || 'Falha ao sincronizar.');
     } finally {
-      setSyncingBranches(prev => {
-        const next = new Set(prev);
-        next.delete(branchId);
-        return next;
-      });
+      setSyncingBranches(prev => { const n = new Set(prev); n.delete(branchId); return n; });
     }
   };
 
