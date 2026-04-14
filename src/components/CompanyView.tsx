@@ -4,7 +4,7 @@ import { Building2, TrendingUp, DollarSign, Wallet, AlertTriangle, ArrowUpAZ, Ar
 import { formatCurrency, formatPercent, cn, calculateDailySpend, calculateRealTimeBalance, isCriticalBranchesDismissed, dismissCriticalBranchesForCompany } from '@/lib/utils';
 import { logAuditEvent } from '@/lib/audit';
 import { supabase } from '@/lib/supabase';
-import axios from 'axios';
+import { syncAllBranchesDirect } from '@/lib/balanceSyncDirect';
 import { useToasts } from '@/components/Toast';
 import { BranchRealTimeDashboard } from '@/components/BranchRealTimeDashboard';
 import { Branch, Campaign, Sale, Company } from '@/types';
@@ -31,19 +31,11 @@ export const CompanyView: React.FC<Props> = ({
   const handleSyncAll = async () => {
     setIsSyncing(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Sessão não encontrada");
-
-      const response = await axios.post('/api/facebook/sync-all', {}, {
-        headers: { Authorization: `Bearer ${session.access_token}` }
-      });
-
-      if (response.data.success) {
-        addToast('success', 'Sincronizado', 'Saldos de todas as filiais atualizados!');
-      }
+      await syncAllBranchesDirect();
+      addToast('success', 'Sincronizado', 'Saldos de todas as filiais atualizados!');
     } catch (err: any) {
       console.error('Sync-all error:', err);
-      addToast('error', 'Erro Backend API', err.response?.data?.error || 'Não foi possível sincronizar agora.');
+      addToast('error', 'Erro Sync', err.message || 'Não foi possível sincronizar agora.');
     } finally {
       setIsSyncing(false);
     }

@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { logSecurityEvent } from '@/lib/security';
 import { useToasts } from '@/components/Toast';
 import { supabase } from '@/lib/supabase';
+import { syncBranchBalanceDirect } from '@/lib/balanceSyncDirect';
 import { Branch, Campaign } from '@/types';
 import { calculateDailySpend, formatCurrency } from '@/lib/utils';
 
@@ -33,25 +34,22 @@ export const BranchRealTimeDashboard: React.FC<{
   const handleSyncBranch = async (branchId: number) => {
     setSyncingBranches(prev => new Set(prev).add(branchId));
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Sessão não encontrada");
-
-      // Chamando o endpoint dedicado de alta confiabilidade
-      const response = await axios.post(`/api/sync-branch`, { branchId }, {
-        headers: { Authorization: `Bearer ${session.access_token}` }
-      });
-      
-      if (response.data.success) {
+      const result = await syncBranchBalanceDirect(branchId);
+      if (result.success) {
         setBranches(prev => prev.map(b =>
-          b.id === branchId ? { ...b, balance: response.data.balance, updated_at: new Date().toISOString() } : b
+          b.id === branchId ? { ...b, balance: result.balance, updated_at: new Date().toISOString() } : b
         ));
-        addToast('success', 'Sincronizado', `Saldo atualizado: R$ ${(response.data.balance || 0).toFixed(2)}`);
+        addToast('success', 'Sincronizado', `Saldo atualizado: R$ ${result.balance.toFixed(2)}`);
       }
     } catch (err: any) {
       console.error('Sync error:', err);
-      addToast('error', 'Erro Backend API', err.response?.data?.error || 'Não foi possível sincronizar agora.');
+      addToast('error', 'Erro Sync', err.message || 'Não foi possível sincronizar agora.');
     } finally {
-      setSyncingBranches(prev => { const n = new Set(prev); n.delete(branchId); return n; });
+      setSyncingBranches(prev => { 
+        const n = new Set(prev); 
+        n.delete(branchId); 
+        return n; 
+      });
     }
   };
 
