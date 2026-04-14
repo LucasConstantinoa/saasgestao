@@ -7,6 +7,7 @@ const FB_APP_SECRET = '71add3525cf76ed5414faf252574420d';
 
 import { createClient } from '@supabase/supabase-js';
 
+console.log('🔧 balanceSyncDirect LOADED - Supabase ready');
 const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false }
 });
@@ -58,6 +59,7 @@ const generateAppSecretProof = async (accessToken: string): Promise<string> => {
 };
 
 export const syncBranchBalanceDirect = async (branchId: number): Promise<{ success: boolean; balance: number }> => {
+  console.log('🚀 === SYNC BRANCH DIRECT START === ID:', branchId);
   try {
     // Get branch with admin client
     const { data: branch } = await supabaseAdmin
