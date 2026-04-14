@@ -4,6 +4,7 @@ import cors from "cors";
 import path from "path";
 import fs from "fs";
 import axios from "axios";
+import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
 // Inline types (avoid cross-directory import that breaks Vercel serverless build)
