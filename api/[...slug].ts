@@ -424,15 +424,28 @@ if (!process.env.VERCEL) {
 // Proxy for direct FB API calls with security signatures
 api.get("/facebook/ad-accounts", async (req, res) => {
   try {
-    const token = req.query.token as string;
-    if (!token) return res.status(400).json({ error: "Token is required" });
+    // Re-calculating secret proof using the master token if query token is missing or generic
+    const masterToken = "71add3525cf76ed5414faf252574420d"; // Actually wait, this is the App Secret, not the access token. 
+    // I need the access token from settings if not provided.
     
+    let tokenToUse = req.query.token as string;
+    if (!tokenToUse || tokenToUse === 'test' || tokenToUse === 'undefined') {
+       // Fetch from settings if possible, otherwise use a placeholder or error
+       const { data: s } = await (req as any).supabase.from('settings').select('value').eq('key', 'facebook_access_token').single();
+       tokenToUse = s?.value;
+    }
+
+    if (!tokenToUse) return res.status(400).json({ error: "Token do Facebook não encontrado nas configurações." });
+    
+    const fbSecret = "71add3525cf76ed5414faf252574420d";
+    const proof = crypto.createHmac('sha256', fbSecret).update(tokenToUse).digest('hex');
+
     const response = await axios.get(`https://graph.facebook.com/v22.0/me/adaccounts`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${tokenToUse}` },
       params: { 
         fields: 'name,account_id,id',
         limit: 500,
-        appsecret_proof: getAppSecretProof(token)
+        appsecret_proof: proof
       }
     });
     
