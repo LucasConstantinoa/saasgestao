@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { KPI, Card, Badge } from '@/components/UI';
-import { Building2, TrendingUp, DollarSign, Wallet, AlertTriangle, ArrowUpAZ, ArrowDownZA, X, Zap } from 'lucide-react';
+import { Building2, TrendingUp, DollarSign, Wallet, AlertTriangle, ArrowUpAZ, ArrowDownZA, X, Zap, RefreshCw } from 'lucide-react';
 import { formatCurrency, formatPercent, cn, calculateDailySpend, calculateRealTimeBalance, isCriticalBranchesDismissed, dismissCriticalBranchesForCompany } from '@/lib/utils';
 import { logAuditEvent } from '@/lib/audit';
 import { supabase } from '@/lib/supabase';
 import axios from 'axios';
+import { useToasts } from '@/components/Toast';
 import { BranchRealTimeDashboard } from '@/components/BranchRealTimeDashboard';
 import { Branch, Campaign, Sale, Company } from '@/types';
 
@@ -25,14 +26,24 @@ export const CompanyView: React.FC<Props> = ({
 }) => {
   const [dismissedCritical, setDismissedCritical] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const { addToast } = useToasts();
 
   const handleSyncAll = async () => {
     setIsSyncing(true);
     try {
-      // Mock sync
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    } catch (err) {
-      console.error('Error syncing all branches:', err);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Sessão não encontrada");
+
+      const response = await axios.post('/api/facebook/sync-all', {}, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+
+      if (response.data.success) {
+        addToast('success', 'Sincronizado', 'Saldos de todas as filiais atualizados!');
+      }
+    } catch (err: any) {
+      console.error('Sync-all error:', err);
+      addToast('error', 'Erro Backend API', err.response?.data?.error || 'Não foi possível sincronizar agora.');
     } finally {
       setIsSyncing(false);
     }
@@ -148,8 +159,8 @@ export const CompanyView: React.FC<Props> = ({
           disabled={isSyncing}
           className="btn-secondary flex items-center gap-2 text-xs disabled:opacity-50"
         >
-          <Zap size={16} className={isSyncing ? "animate-pulse" : ""} />
-          <span>{isSyncing ? 'Atualizando...' : 'Atualizar Tudo'}</span>
+          <RefreshCw size={16} className={cn(isSyncing && "animate-spin")} />
+          <span>{isSyncing ? 'Sincronizando...' : 'Sincronizar Tudo'}</span>
         </button>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">

@@ -33,8 +33,13 @@ export const BranchRealTimeDashboard: React.FC<{
   const handleSyncBranch = async (branchId: number) => {
     setSyncingBranches(prev => new Set(prev).add(branchId));
     try {
-      // Calling the dedicated high-reliability endpoint (same as App.tsx)
-      const response = await axios.get(`/api/sync-branch?branchId=${branchId}`);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Sessão não encontrada");
+
+      // Chamando o endpoint dedicado de alta confiabilidade
+      const response = await axios.post(`/api/sync-branch`, { branchId }, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
       
       if (response.data.success) {
         setBranches(prev => prev.map(b =>
@@ -44,9 +49,6 @@ export const BranchRealTimeDashboard: React.FC<{
       }
     } catch (err: any) {
       console.error('Sync error:', err);
-      // Fallback: relax and reload from Supabase
-      const { data: fb } = await supabase.from('branches').select('balance').eq('id', branchId).single();
-      if (fb) setBranches(prev => prev.map(b => b.id === branchId ? { ...b, balance: fb.balance } : b));
       addToast('error', 'Erro Backend API', err.response?.data?.error || 'Não foi possível sincronizar agora.');
     } finally {
       setSyncingBranches(prev => { const n = new Set(prev); n.delete(branchId); return n; });

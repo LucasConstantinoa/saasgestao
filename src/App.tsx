@@ -616,7 +616,14 @@ export default function App() {
     setIsSyncingBalance(true);
     addToast('info', 'Sincronizando', `Buscando saldo real do Facebook para ${selectedBranch.name}...`);
     try {
-      const response = await axios.get(`/api/sync-branch?branchId=${selectedBranch.id}`);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Sessão não encontrada");
+
+      const response = await axios.post(`/api/sync-branch`, { 
+        branchId: selectedBranch.id 
+      }, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
       
       if (response.data.success) {
         setBranches(prev => prev.map(b => 
