@@ -5,6 +5,7 @@ import path from "path";
 import fs from "fs";
 import axios from "axios";
 import { createClient } from "@supabase/supabase-js";
+import type { FacebookAccountResponse, FundingSourceDetails } from '../src/types.js';
 
 
 
@@ -217,19 +218,20 @@ async function syncBranchBalance(supabaseClient: any, branch: any) {
         const accountRes = await axiosWithRetry(() => axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
           headers: { Authorization: `Bearer ${tokenToUse}` },
           params: { 
-            fields: 'balance,is_prepaid_account,funding_source_details{id,balance,type},spend_cap,amount_spent,account_status,total_prepaid_balance',
+            fields: 'balance,is_prepaid_account,funding_source_details{id,name,display_string,balance,type,balance_source,last_balance_fetch},spend_cap,amount_spent,account_status,total_prepaid_balance',
             appsecret_proof: getAppSecretProof(tokenToUse)
           }
         }));
         
-        const data = accountRes.data;
-        console.log(`[DEBUG_DETAILED] Raw API response for ${cleanId}:`, JSON.stringify(data));
+        const data: FacebookAccountResponse = accountRes.data as FacebookAccountResponse;
+        console.log(`[DEBUG_DETAILED] Raw API response for ${cleanId} (${data.funding_source_details?.display_string || 'no funding source'}):`, JSON.stringify(data));
         const balanceVal = parseFloat(data.balance || "0");
         const totalPrepaidVal = parseFloat(data.total_prepaid_balance || "0");
         const amountSpentVal = parseFloat(data.amount_spent || "0");
         const spendCapVal = parseFloat(data.spend_cap || "0");
         
         const fundingBalance = data.funding_source_details?.balance ? parseFloat(data.funding_source_details.balance) : 0;
+        const fundingName = data.funding_source_details?.display_string || data.funding_source_details?.name || 'unknown';
         const totalPrepaid = totalPrepaidVal;
         const rawBalance = balanceVal;
         const spent = amountSpentVal;
@@ -257,13 +259,13 @@ async function syncBranchBalance(supabaseClient: any, branch: any) {
           accountBalance = -rawBalance / 100;
         }
         
-        console.log(`[DEBUG_DETAILED] Account ${data.id}: isPrepaid=${!!isPrepaid}, raw=${rawBalance}, prepaid=${totalPrepaid}, funding=${fundingBalance}. Calculated: ${accountBalance}`);
+        console.log(`[DEBUG_DETAILED] Account ${data.id} (${fundingName}): isPrepaid=${!!isPrepaid}, raw=${rawBalance}, prepaid=${totalPrepaid}, funding=${fundingBalance}. Calculated: ${accountBalance}`);
         totalBalance += accountBalance;
 
         // DEBUG LEAK TO AUDIT LOG
         await supabaseClient.from('audit_log').insert({
           action: 'DEBUG_META_SYNC',
-          detail: `Filial ${branch.id} (${data.id}): balance=${rawBalance}, prepaid=${totalPrepaid}, funding=${fundingBalance}, isPrepaid=${!!isPrepaid}. Resp: ${JSON.stringify(data).substring(0, 1000)}`,
+          detail: `Filial ${branch.id} (${data.id}, ${fundingName}): balance=${rawBalance}, prepaid=${totalPrepaid}, funding=${fundingBalance}, isPrepaid=${!!isPrepaid}. Resp: ${JSON.stringify(data).substring(0, 1000)}`,
           type: 'info'
         });
       } catch (err: any) {
@@ -657,7 +659,7 @@ api.get("/facebook/balance", branchAuth, async (req, res) => {
           axiosWithRetry(() => axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
             headers: { Authorization: `Bearer ${tokenToUse}` },
             params: { 
-              fields: 'balance,amount_spent,spend_cap,currency,funding_source_details,account_status',
+              fields: 'balance,amount_spent,spend_cap,currency,funding_source_details{id,name,display_string,balance,type,balance_source,last_balance_fetch},account_status',
               appsecret_proof: getAppSecretProof(tokenToUse)
             }
           })).then(res => {
@@ -704,10 +706,10 @@ api.get("/facebook/balance", branchAuth, async (req, res) => {
     let isPrepaidGlobal = results.some(r => r?.account?.is_prepaid_account || (r?.account?.funding_source_details && r?.account?.funding_source_details.balance));
 
     results.forEach(res => {
-      const data = res?.account;
+      const data: FacebookAccountResponse = res?.account as FacebookAccountResponse;
       if (!data) return;
       
-      console.log(`[DEBUG] Fetching balance for branch ${branchId}, account ${data.id}. Raw data:`, JSON.stringify(data, null, 2));
+      console.log(`[DEBUG] Fetching balance for branch ${branchId}, account ${data.id} (${data.funding_source_details?.display_string || 'no source'}). Raw data:`, JSON.stringify(data, null, 2));
       
       const insights = res?.insights || [];
       

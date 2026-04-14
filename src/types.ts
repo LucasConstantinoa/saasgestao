@@ -161,3 +161,26 @@ export interface FacebookInviteLink {
   expires_at: string;
   created_at: string;
 }
+
+// NEW: Facebook API Response Types for Balance Fixes
+export interface FundingSourceDetails {
+  id: string;
+  name?: string;
+  display_string: string;
+  balance: string;
+  type: string;
+  balance_source?: string;
+  last_balance_fetch?: string;
+}
+
+export interface FacebookAccountResponse {
+  id: string;
+  balance: string;
+  is_prepaid_account: boolean;
+  funding_source_details?: FundingSourceDetails;
+  spend_cap?: string;
+  amount_spent?: string;
+  account_status: string;
+  total_prepaid_balance?: string;
+  currency?: string;
+}
