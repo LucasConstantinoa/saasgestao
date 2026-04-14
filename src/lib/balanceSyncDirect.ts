@@ -84,21 +84,33 @@ export const syncBranchBalanceDirect = async (branchId: number): Promise<{ succe
     for (const cleanId of adAccountIds) {
       const proof = await generateAppSecretProof(fbToken);
       
-      const response = await fetch(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+      const params = new URLSearchParams({
+        access_token: fbToken,
+        appsecret_proof: proof,
+        fields: 'funding_source_details'
+      });
+      
+      const response = await fetch(`https://graph.facebook.com/v22.0/act_${cleanId}?${params}`, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        cf: {
-          cacheEverything: true,
-          cacheTtl: 300
-        }
-      } as RequestInit);
+        headers: { 'Content-Type': 'application/json' }
+      });
 
+      if (!response.ok) {
+        console.error(`FB API error ${cleanId}:`, response.status, await response.text());
+        continue;
+      }
+      
       const data = await response.json();
+      console.log(`[DEBUG ${cleanId}] display_string:`, data.funding_source_details?.display_string);
       
       const displayStr = data.funding_source_details?.display_string;
       
       if (displayStr) {
-        totalBalance += parseDisplayValue(displayStr);
+        const value = parseDisplayValue(displayStr);
+        console.log(`[SYNC ${cleanId}] Parsed: R$ ${value.toFixed(2)} from "${displayStr}"`);
+        totalBalance += value;
+      } else {
+        console.warn(`[NO DISPLAY] ${cleanId}:`, data.funding_source_details);
       }
     }
 
