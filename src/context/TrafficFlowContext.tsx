@@ -275,8 +275,7 @@ export const TrafficFlowProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log('Auth event in TrafficFlowContext:', event);
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        const userMeta = session?.user?.user_metadata || {};
-        const isAdminUser = userMeta.role === 'admin' || session?.user?.email === 'brtreino@gmail.com';
+        const isAdminUser = session?.user?.email === 'brtreino@gmail.com';
         setIsAdmin(isAdminUser);
         fetchData(false); // Refetch fresh on auth change
       } else if (event === 'SIGNED_OUT') {

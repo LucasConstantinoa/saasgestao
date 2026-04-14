@@ -169,6 +169,7 @@ export default function App() {
     settings, 
     loading,
     isAdmin,
+    userPermissions,
     fetchData,
     setSettings,
     setCompanies,
@@ -220,11 +221,11 @@ export default function App() {
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
   // Access Control Logic
-  const currentBranchPermission = (userPermissions || []).find(p => p.branch_id === selectedBranch?.id);
+  const currentBranchPermission = (userPermissions || []).find(p => p.id === selectedBranch?.id || p.branch_id === selectedBranch?.id);
   
-  const canManageSelectedBranch = isAdmin || currentBranchPermission?.permission_level === 'edit';
-  const canAddSale = isAdmin || ['edit', 'add_sale', 'operator'].includes(currentBranchPermission?.permission_level);
-  const isReportsOnly = !isAdmin && currentBranchPermission?.permission_level === 'reports_only' && !currentBranchPermission?.permission_level === 'view';
+  const canManageSelectedBranch = isAdmin || currentBranchPermission?.permission_level === 'edit' || currentBranchPermission?.permission_level === 'admin';
+  const canAddSale = isAdmin || ['edit', 'add_sale', 'operator', 'admin'].includes(currentBranchPermission?.permission_level);
+  const isReportsOnly = !isAdmin && currentBranchPermission?.permission_level === 'reports_only';
   
   // Update view logic based on permissions
   useEffect(() => {

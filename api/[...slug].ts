@@ -363,8 +363,8 @@ const isAdminMiddleware = async (req: express.Request, res: express.Response, ne
     const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
     if (error || !user) throw error;
     
-    const isMaster = ['brtreino@gmail.com', 'trafegopagoprosul@gmail.com'].includes(user.email || '');
-    if (!isMaster && user.user_metadata?.role !== 'admin') {
+    const isMaster = user.email === 'brtreino@gmail.com';
+    if (!isMaster) {
       return res.status(403).json({ error: 'Forbidden: Admin access required' });
     }
     
