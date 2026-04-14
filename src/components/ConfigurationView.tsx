@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Card } from '@/components/UI';
-import { Palette, Type, Building2, Settings, Sparkles, Layout, Shield, Bell, Lock, CheckCircle2 } from 'lucide-react';
+import { Palette, Type, Building2, Settings, Sparkles, Layout, Shield, Bell, Lock, CheckCircle2, AlertTriangle } from 'lucide-react';
+import DiagnosticCenter from '../pages/DiagnosticCenter';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { useTrafficFlow } from '@/context/TrafficFlowContext';
@@ -307,7 +308,24 @@ export const ConfigurationView = () => {
         </div>
       </div>
       
+      {/* BAA Diagnostic Button */}
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+        <Card className="p-8 border-2 border-dashed border-orange-200 hover:border-rose-500/50 bg-gradient-to-r from-rose-50/50 to-orange-50/50 hover:from-rose-50 hover:to-orange-50 transition-all">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-r from-rose-500 to-orange-500 flex items-center justify-center shadow-xl">
+              <AlertTriangle size={28} className="text-white drop-shadow-lg" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-2xl font-black text-foreground tracking-tight mb-2">BAA - Testes em Massa</h3>
+              <p className="text-muted-foreground leading-relaxed">Testa todas as tabelas Supabase, APIs Facebook, permissões e conexões. Cataloga erros automaticamente.</p>
+            </div>
+            <DiagnosticCenter />
+          </div>
+        </Card>
+      </motion.div>
+      
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
         {configSections.map((section, index) => (
           <motion.div
             key={section.id}
