@@ -4,7 +4,7 @@ import { InView } from 'react-intersection-observer';
 import { motion, AnimatePresence } from 'motion/react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { UsersView } from '@/pages/UsersView';
-import { Login } from '@/pages/Login';
+import { Login } from '@/pages/LoginPage';
 import { Layout } from '@/components/Layout';
 import { PremiumLoading } from '@/components/PremiumLoading';
 import { BranchRealTimeDashboard } from '@/components/BranchRealTimeDashboard';
