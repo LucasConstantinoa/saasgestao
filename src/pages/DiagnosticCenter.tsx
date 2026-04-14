@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+/configurationimport React, { useState, useEffect } from 'react';
 import { Card, Badge } from '@/components/UI';
 // Button from shadcn (use existing Button if available, or use html button)
 
@@ -30,9 +30,9 @@ const DiagnosticCenter = () => {
   const runSupabaseTests = async () => {
     const tests = [
       { name: 'audit_log (Admin only)', fn: async () => {
-        const { data, error } = await supabase.from('audit_log').select('count', { count: 'exact', head: true });
+        const { data, error, count } = await supabase.from('audit_log').select('*', { count: 'exact', head: true });
         if (error) throw new Error(`Query failed: ${error.message}`);
-        return `Count: ${data[0].count || 0}`;
+        return `Count: ${count || 0}`;
       }},
       { name: 'branches', fn: async () => {
         const { data, error } = await supabase.from('branches').select('id, name, balance, facebook_ad_account_id, facebook_access_token, facebook_bm_id, facebook_bm_name, facebook_funding_source').limit(3);
@@ -46,25 +46,25 @@ const DiagnosticCenter = () => {
         return 'Empty table';
       }},
       { name: 'campaigns', fn: async () => {
-        const { data, error } = await supabase.from('campaigns').select('count', { count: 'exact', head: true });
+        const { data, error, count } = await supabase.from('campaigns').select('*', { count: 'exact', head: true });
         if (error) throw new Error(`Query failed: ${error.message}`);
-        return `Count: ${data[0].count || 0}`;
+        return `Count: ${count || 0}`;
       }},
       { name: 'sales', fn: async () => {
-        const { data, error } = await supabase.from('sales').select('count', { count: 'exact', head: true });
+        const { data, error, count } = await supabase.from('sales').select('*', { count: 'exact', head: true });
         if (error) throw new Error(`Query failed: ${error.message}`);
-        return `Count: ${data[0].count || 0}`;
-      }},
+        return `Count: ${count || 0}`;
+      } },
       { name: 'notifications', fn: async () => {
         const { data, error } = await supabase.from('notifications').select('*').order('id', { ascending: false }).limit(5);
         if (error) throw new Error(`Query failed: ${error.message}`);
         return `Recent: ${data.length} unread: ${data.filter((n: any) => !n.read).length}`;
       }},
       { name: 'user_branch_permissions', fn: async () => {
-        const { data, error } = await supabase.from('user_branch_permissions').select('count', { count: 'exact', head: true });
+        const { data, error, count } = await supabase.from('user_branch_permissions').select('*', { count: 'exact', head: true });
         if (error) throw new Error(`Query failed: ${error.message}`);
-        return `Count: ${data[0].count || 0}`;
-      }},
+        return `Count: ${count || 0}`;
+      } },
       { name: 'settings', fn: async () => {
         const { data, error } = await supabase.from('settings').select('*');
         if (error) throw new Error(`Query failed: ${error.message}`);
