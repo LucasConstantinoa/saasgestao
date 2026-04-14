@@ -33,69 +33,71 @@ export const BranchRealTimeDashboard: React.FC<{
   const handleSyncBranch = async (branchId: number) => {
     setSyncingBranches(prev => new Set(prev).add(branchId));
     try {
-      // 1. Get branch data from Supabase
-      const { data: branch, error: branchError } = await supabase
-        .from('branches')
-        .select('id, name, facebook_ad_account_id, facebook_access_token')
-        .eq('id', branchId)
-        .single();
-
-      if (branchError || !branch) {
-        addToast('error', 'Erro', 'Filial não encontrada no banco de dados.');
-        return;
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      // Strategy 1: Try API route (server-side, no CORS issues)
+      try {
+        if (session) {
+          const response = await axios.post('/api/facebook/sync', 
+            { branchId },
+            { headers: { Authorization: `Bearer ${session.access_token}` }, timeout: 15000 }
+          );
+          if (response.data.success) {
+            setBranches(prev => prev.map(b =>
+              b.id === branchId ? { ...b, balance: response.data.balance, updated_at: new Date().toISOString() } : b
+            ));
+            addToast('success', 'Sincronizado', `Saldo atualizado: R$ ${(response.data.balance || 0).toFixed(2)}`);
+            return;
+          }
+        }
+      } catch (apiErr: any) {
+        console.warn('API route failed, trying direct Facebook call...', apiErr.message);
       }
 
-      if (!branch.facebook_ad_account_id) {
-        addToast('warning', 'Sem conta', `${branch.name} não tem conta de anúncio configurada.`);
-        return;
-      }
-
-      // 2. Get token (branch token or global fallback)
-      let token = branch.facebook_access_token;
-      if (!token) {
-        const { data: settingsRow } = await supabase
-          .from('settings')
-          .select('value')
-          .eq('key', 'facebook_access_token')
+      // Strategy 2: Try direct Facebook Graph API call (may work if CORS allows)
+      try {
+        const { data: branch } = await supabase
+          .from('branches')
+          .select('id, name, facebook_ad_account_id, facebook_access_token')
+          .eq('id', branchId)
           .single();
-        token = settingsRow?.value;
-      }
 
-      if (!token) {
-        addToast('error', 'Sem token', 'Token do Facebook não encontrado.');
-        return;
-      }
+        if (!branch?.facebook_ad_account_id) {
+          addToast('warning', 'Sem conta', 'Filial sem conta de anúncio configurada.');
+          return;
+        }
 
-      // 3. Parse ad account IDs
-      const adAccountIds = branch.facebook_ad_account_id.split(',')
-        .map((id: string) => id.trim().split('|')[0].replace('act_', ''))
-        .filter(Boolean);
+        let token = branch.facebook_access_token;
+        if (!token) {
+          const { data: settingsRow } = await supabase.from('settings').select('value').eq('key', 'facebook_access_token').single();
+          token = settingsRow?.value;
+        }
+        if (!token) {
+          addToast('error', 'Sem token', 'Token do Facebook não encontrado.');
+          return;
+        }
 
-      if (adAccountIds.length === 0) {
-        addToast('error', 'Sem contas', 'Nenhum ID de conta válido encontrado.');
-        return;
-      }
+        const adAccountIds = branch.facebook_ad_account_id.split(',')
+          .map((id: string) => id.trim().split('|')[0].replace('act_', ''))
+          .filter(Boolean);
 
-      // 4. Call Facebook Graph API directly and calculate balance
-      let totalBalance = 0;
-      const parseDisplayValue = (str: string | undefined) => {
-        if (!str) return 0;
-        const cleaned = str.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
-        return parseFloat(cleaned) || 0;
-      };
+        let totalBalance = 0;
+        const parseDisplayValue = (str: string | undefined) => {
+          if (!str) return 0;
+          const cleaned = str.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
+          return parseFloat(cleaned) || 0;
+        };
 
-      const results = await Promise.all(adAccountIds.map(async (cleanId: string) => {
-        try {
+        for (const cleanId of adAccountIds) {
           const response = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
             params: {
               access_token: token,
               fields: 'balance,is_prepaid_account,funding_source_details{id,display_string,balance,type},spend_cap,amount_spent,total_prepaid_balance'
-            }
+            },
+            timeout: 10000
           });
-
           const data = response.data;
           const isPrepaid = data.is_prepaid_account || !!(data.funding_source_details && (data.funding_source_details.balance || data.funding_source_details.display_string));
-
           let accountBalance = 0;
           if (isPrepaid) {
             const fundingVal = data.funding_source_details?.balance ? parseFloat(data.funding_source_details.balance) / 100 : 0;
@@ -103,51 +105,34 @@ export const BranchRealTimeDashboard: React.FC<{
             const displayVal = parseDisplayValue(data.funding_source_details?.display_string);
             accountBalance = Math.abs(fundingVal || prepaidVal || displayVal || (parseFloat(data.balance || "0") / 100));
           } else {
-            const rawBalance = parseFloat(data.balance || "0") / 100;
-            const amountSpent = parseFloat(data.amount_spent || "0") / 100;
-            const spendCap = parseFloat(data.spend_cap || "0") / 100;
-            if (spendCap > 0) {
-              accountBalance = Math.max(0, spendCap - amountSpent);
-            } else {
-              accountBalance = -rawBalance;
-            }
+            const rawBal = parseFloat(data.balance || "0") / 100;
+            const spent = parseFloat(data.amount_spent || "0") / 100;
+            const cap = parseFloat(data.spend_cap || "0") / 100;
+            accountBalance = cap > 0 ? Math.max(0, cap - spent) : -rawBal;
           }
-
-          return { id: cleanId, balance: accountBalance, ok: true };
-        } catch (err: any) {
-          console.error(`Erro conta ${cleanId}:`, err.response?.data || err.message);
-          return { id: cleanId, balance: 0, ok: false, error: err.response?.data?.error?.message || err.message };
+          totalBalance += accountBalance;
         }
-      }));
 
-      totalBalance = results.filter(r => r.ok).reduce((sum, r) => sum + r.balance, 0);
-      const failedCount = results.filter(r => !r.ok).length;
-
-      // 5. Save to Supabase
-      const { error: updateError } = await supabase
-        .from('branches')
-        .update({ balance: totalBalance, updated_at: new Date().toISOString() })
-        .eq('id', branchId);
-
-      if (updateError) {
-        console.error('Supabase update error:', updateError);
-        addToast('error', 'Erro Supabase', 'Não foi possível salvar o saldo atualizado.');
+        // Save to Supabase
+        await supabase.from('branches').update({ balance: totalBalance, updated_at: new Date().toISOString() }).eq('id', branchId);
+        setBranches(prev => prev.map(b => b.id === branchId ? { ...b, balance: totalBalance } : b));
+        addToast('success', 'Sincronizado (direto)', `Saldo: R$ ${totalBalance.toFixed(2)}`);
         return;
+      } catch (fbErr: any) {
+        console.warn('Direct Facebook call also failed (CORS?):', fbErr.message);
       }
 
-      // 6. Update UI immediately
-      setBranches(prev => prev.map(b =>
-        b.id === branchId ? { ...b, balance: totalBalance, updated_at: new Date().toISOString() } : b
-      ));
-
-      if (failedCount > 0) {
-        addToast('warning', 'Parcial', `Saldo atualizado: R$ ${totalBalance.toFixed(2)} (${failedCount} conta(s) com erro)`);
+      // Strategy 3: Fallback - just reload from Supabase (balance from last server sync)
+      const { data: freshBranch } = await supabase.from('branches').select('balance, updated_at').eq('id', branchId).single();
+      if (freshBranch) {
+        setBranches(prev => prev.map(b => b.id === branchId ? { ...b, balance: freshBranch.balance, updated_at: freshBranch.updated_at } : b));
+        addToast('info', 'Saldo do cache', `Saldo mais recente do banco: R$ ${(freshBranch.balance || 0).toFixed(2)}`);
       } else {
-        addToast('success', 'Sincronizado', `${branch.name}: R$ ${totalBalance.toFixed(2)}`);
+        addToast('error', 'Erro', 'Não foi possível obter o saldo de nenhuma fonte.');
       }
     } catch (err: any) {
       console.error('Sync error:', err);
-      addToast('error', 'Erro ao sincronizar', err.message || 'Falha na comunicação com o Facebook.');
+      addToast('error', 'Erro', err.message || 'Falha ao sincronizar.');
     } finally {
       setSyncingBranches(prev => {
         const next = new Set(prev);
