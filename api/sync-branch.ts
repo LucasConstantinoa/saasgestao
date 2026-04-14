@@ -29,10 +29,21 @@ export default async function handler(req: any, res: any) {
     const { data: branch, error: bError } = await supabase.from('branches').select('*').eq('id', branchId).single();
     if (bError || !branch) return res.status(404).json({ error: 'Branch not found' });
 
-    const token = branch.facebook_access_token || (await supabase.from('settings').select('value').eq('key', 'facebook_access_token').single()).data?.value;
-    if (!token) return res.status(400).json({ error: 'Facebook token not found' });
+    const fbToken = branch.facebook_access_token || (await supabase.from('settings').select('value').eq('key', 'facebook_access_token').single()).data?.value;
+    
+    if (!fbToken) {
+      console.error('Facebook Token not found for branch:', branchId);
+      return res.status(400).json({ error: 'Token do Facebook não configurado.' });
+    }
 
-    const adAccountIds = branch.facebook_ad_account_id.split(',').map((id: string) => id.trim().split('|')[0].replace('act_', '')).filter(Boolean);
+    const adAccountIds = (branch.facebook_ad_account_id || '').split(',')
+      .map((id: string) => id.trim().split('|')[0].replace('act_', ''))
+      .filter(Boolean);
+
+    if (adAccountIds.length === 0) {
+      return res.status(400).json({ error: 'Nenhum ID de conta de anúncio encontrado.' });
+    }
+
     let totalBalance = 0;
 
     const parseDisplayValue = (str: string | undefined) => {
@@ -53,32 +64,45 @@ export default async function handler(req: any, res: any) {
     };
 
     for (const cleanId of adAccountIds) {
-      const proof = crypto.createHmac('sha256', fbSecret).update(token).digest('hex');
-      const response = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
-        params: {
-          access_token: token,
-          appsecret_proof: proof,
-          fields: 'balance,is_prepaid_account,funding_source_details{display_string,balance},total_prepaid_balance'
+      try {
+        const proof = crypto.createHmac('sha256', fbSecret).update(fbToken).digest('hex');
+        const response = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+          params: {
+            access_token: fbToken,
+            appsecret_proof: proof,
+            fields: 'balance,is_prepaid_account,funding_source_details{display_string,balance},total_prepaid_balance'
+          },
+          timeout: 10000
+        });
+        
+        const d = response.data;
+        const displayStr = d.funding_source_details?.display_string;
+        
+        if (displayStr) {
+          totalBalance += parseDisplayValue(displayStr);
+        } else if (d.funding_source_details?.balance) {
+          totalBalance += Math.abs(parseFloat(d.funding_source_details.balance) / 100);
+        } else if (d.total_prepaid_balance) {
+          totalBalance += Math.abs(parseFloat(d.total_prepaid_balance) / 100);
+        } else {
+          totalBalance += Math.abs(parseFloat(d.balance || "0") / 100);
         }
-      });
-      const d = response.data;
-      const displayStr = d.funding_source_details?.display_string;
-      
-      if (displayStr) {
-        totalBalance += parseDisplayValue(displayStr);
-      } else if (d.funding_source_details?.balance) {
-        totalBalance += Math.abs(parseFloat(d.funding_source_details.balance) / 100);
-      } else if (d.total_prepaid_balance) {
-        totalBalance += Math.abs(parseFloat(d.total_prepaid_balance) / 100);
-      } else {
-        totalBalance += Math.abs(parseFloat(d.balance || "0") / 100);
+      } catch (accErr: any) {
+        console.error(`FB Account Error (${cleanId}):`, accErr.response?.data || accErr.message);
       }
     }
 
-    await supabase.from('branches').update({ balance: totalBalance, updated_at: new Date().toISOString() }).eq('id', branchId);
+    const { error: updateError } = await supabase.from('branches').update({ 
+      balance: totalBalance, 
+      updated_at: new Date().toISOString() 
+    }).eq('id', branchId);
+
+    if (updateError) throw updateError;
+
     return res.json({ success: true, balance: totalBalance });
 
   } catch (err: any) {
-    return res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+    console.error('Final Sync Error:', err);
+    return res.status(500).json({ error: err.response?.data?.error?.message || err.message || 'Erro interno desconhecido' });
   }
 }
