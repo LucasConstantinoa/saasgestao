@@ -187,32 +187,44 @@ const DiagnosticCenter = () => {
       
       try {
         const details = await test.fn();
-        result.status = 'pass';
-        result.message = `✅ ${details}`;
+        if (typeof details === 'string' && details.startsWith('warning:')) {
+          result.status = 'warning';
+          result.message = `⚠️ ${details.replace('warning: ', '')}`;
+        } else {
+          result.status = 'pass';
+          result.message = `✅ ${details}`;
+        }
       } catch (error: any) {
         result.status = 'fail';
         result.message = `❌ Falha na API do Facebook`;
         
         let errorDetails = error.message || String(error);
-        if (error.message === 'no_session') {
-          errorDetails = "O usuário atual não possui uma sessão válida de autenticação para chamar a API.";
+        
+        // Check if it's a thrown error with details (from balance test)
+        if (error.details) {
+          result.message = `⚠️ ${error.message}`;
+          result.status = 'warning';
+          errorDetails = error.details;
+        } else if (error.message === 'no_session') {
+          errorDetails = "O usuário atual não possui uma sessão válida de autenticação.";
         } else if (error.response?.status === 404) {
           result.message = '❌ Rota da API não existe (404)';
-          errorDetails = "A API não retornou resposta porque o endereço (endpoint) não existe ou o servidor está fora do ar. Verifique se o Vercel tem a rota /api/facebook.";
+          errorDetails = "O endpoint não existe. Verifique se a rota está configurada no Vercel.";
         } else if (error.response?.status === 403 || error.response?.status === 401) {
-          result.message = `❌ Acesso Negado (Erro ${error.response.status})`;
-          errorDetails = "Não autorizado. O token do Facebook pode ser inválido, estar vencido ou o usuário não tem permissão para acessar estes dados.";
+          result.message = `❌ Acesso Negado (${error.response.status})`;
+          errorDetails = `Não autorizado. O token do Facebook pode ser inválido ou estar vencido. Resposta: ${error.response?.data?.error?.message || JSON.stringify(error.response?.data)}`;
         } else if (error.response?.status === 500) {
           result.message = '❌ Erro Interno do Servidor (500)';
-          errorDetails = `Ocorreu um erro dentro da lógica da API do backend. Servidor quebrou durante a execução. Rastreio: ${error.response.data?.message || JSON.stringify(error.response.data) || 'Nenhum erro providenciado'}`;
-        } else if (error.request) {
-          result.message = '❌ Backend não responde';
-          errorDetails = "A requisição enviada não obteve qualquer resposta do servidor. O serviço proxy pode estar inativo ou há um problema de rede bloqueando a conexão.";
+          errorDetails = `Erro interno: ${error.response?.data?.error?.message || JSON.stringify(error.response?.data) || 'Sem detalhes'}`;
+        } else if (error.response?.data?.error) {
+          result.message = `❌ Erro Facebook (${error.response?.status})`;
+          errorDetails = `Facebook retornou: ${error.response.data.error.message || JSON.stringify(error.response.data.error)}`;
+        } else if (error.request && !error.response) {
+          result.message = '❌ Erro de CORS ou Rede';
+          errorDetails = "A requisição foi enviada mas não houve resposta. Isso geralmente indica um erro de CORS (o Facebook bloqueou a requisição do navegador) ou problema de rede. Tente usar o botão de sincronizar diretamente nos cards das filiais.";
         } else if (errorDetails.toLowerCase().includes('network error')) {
           result.message = '❌ Erro de Rede';
           errorDetails = "Falha grave de rede. Sem conexão à internet ou proxy impedindo requisição.";
-        } else if (error.response?.data?.error?.message) {
-          errorDetails = `Erro retornado pelo Facebook: ${error.response.data.error.message}`;
         }
 
         result.error = errorDetails;
