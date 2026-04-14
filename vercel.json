@@ -1,5 +1,11 @@
 {
   "version": 2,
+  "functions": {
+    "api/[...slug].ts": {
+      "memory": 1024,
+      "maxDuration": 30
+    }
+  },
   "rewrites": [
     {
       "source": "/((?!api/).*)",
@@ -7,4 +13,3 @@
     }
   ]
 }
- 
