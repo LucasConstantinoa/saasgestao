@@ -133,12 +133,14 @@ const DiagnosticCenter = () => {
             return {
               name: branch.name,
               status: 'pass',
-              msg: `R$ ${remaining_balance?.toFixed(2) || '0.00'} (${account_count} conta/s)`
+              value: parseFloat(remaining_balance) || 0,
+              msg: `R$ ${(parseFloat(remaining_balance) || 0).toFixed(2)} (${account_count} conta/s)`
             };
           } catch (e: any) {
             return {
               name: branch.name,
               status: 'fail',
+              value: 0,
               msg: `Falha: ${e.response?.data?.error || e.message}`
             };
           }
@@ -146,14 +148,15 @@ const DiagnosticCenter = () => {
 
         const passed = branchResults.filter(r => r.status === 'pass');
         const failed = branchResults.filter(r => r.status === 'fail');
+        const totalSum = branchResults.reduce((acc, curr) => acc + curr.value, 0);
 
         const details = branchResults.map(r => `${r.status === 'pass' ? '✅' : '❌'} ${r.name}: ${r.msg}`).join('\n');
         
         if (failed.length > 0) {
-          throw Object.assign(new Error(`Sucesso: ${passed.length} | Falha: ${failed.length}`), { details });
+          throw Object.assign(new Error(`Sincronizadas: ${passed.length} | Falha: ${failed.length}`), { details });
         }
         
-        return `${passed.length} filiais sincronizadas. Total Disponível: R$ ${branchResults.reduce((acc, curr: any) => acc + (parseFloat(curr.msg.split(' ')[1]) || 0), 0).toFixed(2)}`;
+        return `${passed.length} filiais sincronizadas. Total Disponível: R$ ${totalSum.toFixed(2)}`;
       }}
     ];
 
