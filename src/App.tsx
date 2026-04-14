@@ -389,7 +389,8 @@ export default function App() {
       
       const accounts = response.data.data.map((acc: any) => ({
         id: acc.account_id || acc.id,
-        name: acc.name
+        name: acc.name,
+        balance: acc.funding_source_details?.display_string || ''
       }));
       
       setFetchedAdAccounts(accounts);
@@ -2430,7 +2431,7 @@ export default function App() {
                     <option value="">Selecione uma conta...</option>
                     {fetchedAdAccounts.map(acc => (
                       <option key={acc.id} value={acc.id}>
-                        {acc.name} ({acc.id})
+                        {acc.name} {acc.balance ? `- ${acc.balance}` : ''} ({acc.id})
                       </option>
                     ))}
                   </select>
@@ -2582,7 +2583,7 @@ export default function App() {
                     <option value="">Selecione uma conta...</option>
                     {fetchedAdAccounts.map(acc => (
                       <option key={acc.id} value={acc.id}>
-                        {acc.name} ({acc.id})
+                        {acc.name} {acc.balance ? `- ${acc.balance}` : ''} ({acc.id})
                       </option>
                     ))}
                   </select>

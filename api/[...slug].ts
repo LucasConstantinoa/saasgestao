@@ -152,7 +152,12 @@ app.get("/api/facebook/ad-accounts", async (req, res) => {
   try {
     const proof = getAppSecretProof(token);
     const response = await axios.get(`https://graph.facebook.com/v22.0/me/adaccounts`, {
-      params: { fields: 'name,account_id,id', limit: 500, access_token: token, appsecret_proof: proof }
+      params: { 
+        fields: 'name,account_id,id,funding_source_details', 
+        limit: 1000, 
+        access_token: token, 
+        appsecret_proof: proof 
+      }
     });
     res.json(response.data);
   } catch (err: any) {
