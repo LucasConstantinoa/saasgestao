@@ -42,7 +42,7 @@ export const BranchRealTimeDashboard: React.FC<{
 
       // We MUST use the backend API because Facebook requires 'appsecret_proof', 
       // which can only be generated securely on the server using the App Secret
-      const response = await axios.post('/api/facebook/sync', 
+      const response = await axios.post('/api/sync-branch', 
         { branchId },
         { headers: { Authorization: `Bearer ${session.access_token}` }, timeout: 15000 }
       );
