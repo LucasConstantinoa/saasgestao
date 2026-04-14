@@ -2,8 +2,8 @@ import { createClient } from "@supabase/supabase-js";
 import axios from "axios";
 import crypto from "crypto";
 
-const supabaseUrl = process.env.SUPABASE_URL || "https://mqhzrmladohpujiigazq.supabase.co";
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://mqhzrmladohpujiigazq.supabase.co";
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
 const fbSecret = process.env.FACEBOOK_APP_SECRET || '71add3525cf76ed5414faf252574420d';
 
 export default async function handler(req: any, res: any) {
@@ -11,14 +11,19 @@ export default async function handler(req: any, res: any) {
 
   const { branchId } = req.body;
   const authHeader = req.headers.authorization;
-  if (!branchId || !authHeader) return res.status(400).json({ error: 'Missing parameters' });
+  if (!branchId || !authHeader) return res.status(400).json({ error: 'Missing parameters (branchId or auth)' });
 
   try {
-    const supabase = createClient(supabaseUrl, supabaseServiceKey || "");
+    const supabase = createClient(supabaseUrl, supabaseKey);
     
     // Auth validation
-    const { data: { user }, error: authError } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''));
-    if (authError || !user) return res.status(401).json({ error: 'Unauthorized' });
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    
+    if (authError || !user) {
+      console.error('Auth Error:', authError?.message);
+      return res.status(401).json({ error: `Unauthorized: ${authError?.message || 'Invalid session'}` });
+    }
 
     // Get branch
     const { data: branch, error: bError } = await supabase.from('branches').select('*').eq('id', branchId).single();
