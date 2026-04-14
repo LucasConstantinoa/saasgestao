@@ -2214,7 +2214,7 @@ export default function App() {
               <Route path="/history" element={<AuditLog logs={auditLogs} />} />
               <Route path="/users" element={isAdmin ? <UsersView /> : <Navigate to="/" />} />
               <Route path="/settings" element={isAdmin ? <SettingsView settings={settings} onSave={handleSaveSettings} /> : <Navigate to="/" />} />
-              <Route path="/configuration" element={isAdmin ? <ConfigurationView /> : <Navigate to="/" />} />
+<Route path="/configuration" element={isAdmin ? <><ConfigurationView /><DiagnosticCenter /></> : <Navigate to="/" />} />
               <Route path="/notifications" element={
                 <div className="max-w-4xl mx-auto">
                   <Card className="p-8" animateBorder={true}>
