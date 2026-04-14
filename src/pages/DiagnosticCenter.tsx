@@ -23,7 +23,7 @@ const DiagnosticCenter = () => {
   const [currentTab, setCurrentTab] = useState<'supabase' | 'facebook' | 'permissions' | 'balance' | 'all'>('supabase');
   const [testResults, setTestResults] = useState<TestResult[]>([]);
   const [isRunning, setIsRunning] = useState(false);
-  const { isAdmin, fetchData } = useTrafficFlow();
+  const { isAdmin, fetchData, branches } = useTrafficFlow();
 
   if (!isAdmin) return null;
 
@@ -119,12 +119,41 @@ const DiagnosticCenter = () => {
         const response = await axios.get('/api/facebook/ad-accounts', { params: { token: 'test' }, headers: { Authorization: `Bearer ${session.access_token}` } });
         return `Contas Retornadas: ${response.data.data?.length || 0}`;
       }},
-      { name: 'Balance API', fn: async () => {
+      { name: 'Balance API (Saldos por Filial)', fn: async () => {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) throw new Error('no_session');
-        const response = await axios.get('/api/facebook/balance?branchId=1', { headers: { Authorization: `Bearer ${session.access_token}` } });
-        const { remaining_balance, facebook_balance, account_count } = response.data;
-        return `Disponível: R$ ${remaining_balance?.toFixed(2) || '0.00'} (Bruto: R$ ${facebook_balance?.toFixed(2) || '0.00'}) | Contas: ${account_count || 0}`;
+        
+        const activeBranches = (branches || []).filter(b => b.facebook_ad_account_id);
+        if (activeBranches.length === 0) return 'warning: Nenhuma filial conectada ao Facebook Ads encontrada.';
+        
+        const branchResults = await Promise.all(activeBranches.map(async (branch) => {
+          try {
+            const res = await axios.get(`/api/facebook/balance?branchId=${branch.id}`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+            const { remaining_balance, account_count } = res.data;
+            return {
+              name: branch.name,
+              status: 'pass',
+              msg: `R$ ${remaining_balance?.toFixed(2) || '0.00'} (${account_count} conta/s)`
+            };
+          } catch (e: any) {
+            return {
+              name: branch.name,
+              status: 'fail',
+              msg: `Falha: ${e.response?.data?.error || e.message}`
+            };
+          }
+        }));
+
+        const passed = branchResults.filter(r => r.status === 'pass');
+        const failed = branchResults.filter(r => r.status === 'fail');
+
+        const details = branchResults.map(r => `${r.status === 'pass' ? '✅' : '❌'} ${r.name}: ${r.msg}`).join('\n');
+        
+        if (failed.length > 0) {
+          throw Object.assign(new Error(`Sucesso: ${passed.length} | Falha: ${failed.length}`), { details });
+        }
+        
+        return `${passed.length} filiais sincronizadas. Total Disponível: R$ ${branchResults.reduce((acc, curr: any) => acc + (parseFloat(curr.msg.split(' ')[1]) || 0), 0).toFixed(2)}`;
       }}
     ];
 
