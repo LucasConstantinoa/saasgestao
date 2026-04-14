@@ -377,14 +377,13 @@ export default function App() {
   const hasInitialSyncRun = useRef(false);
 
   const fetchAdAccounts = useCallback(async (token: string) => {
-    if (!token || token.length < 20) {
-      addToast('warning', 'Token Ausente ou Inválido', 'Nenhum token fornecido para buscar contas.');
-      return;
-    }
+    // If no token, we send 'test' to signify we want to use the server's master token
+    const tokenToUse = (token && token.length > 10) ? token : 'test';
+    
     setIsFetchingAccounts(true);
     try {
       const response = await axios.get(`/api/facebook/ad-accounts`, {
-        params: { token }
+        params: { token: tokenToUse }
       });
       
       const accounts = response.data.data.map((acc: any) => ({
@@ -2416,21 +2415,19 @@ export default function App() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">ID da Conta de Anúncios</label>
-                {(newFacebookAccessToken || settings.facebook_access_token) && (
-                  <button 
-                    type="button"
-                    onClick={() => fetchAdAccounts(newFacebookAccessToken || settings.facebook_access_token || '')}
-                    disabled={isFetchingAccounts}
-                    className="text-[10px] font-black text-primary hover:underline uppercase tracking-widest flex items-center gap-1"
-                  >
-                    {isFetchingAccounts ? (
-                      <RefreshCw size={10} className="animate-spin" />
-                    ) : (
-                      <Search size={10} />
-                    )}
-                    {fetchedAdAccounts.length > 0 ? 'Atualizar Lista' : 'Buscar Contas'}
-                  </button>
-                )}
+                <button 
+                  type="button"
+                  onClick={() => fetchAdAccounts(newFacebookAccessToken || settings.facebook_access_token || '')}
+                  disabled={isFetchingAccounts}
+                  className="text-[10px] font-black text-primary hover:underline uppercase tracking-widest flex items-center gap-1"
+                >
+                  {isFetchingAccounts ? (
+                    <RefreshCw size={10} className="animate-spin" />
+                  ) : (
+                    <Search size={10} />
+                  )}
+                  {fetchedAdAccounts.length > 0 ? 'Atualizar Lista' : (newFacebookAccessToken ? 'Buscar Contas' : 'Buscar Contas (Master)')}
+                </button>
               </div>
               
               {fetchedAdAccounts.length > 0 ? (
@@ -2570,21 +2567,19 @@ export default function App() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">ID da Conta de Anúncios</label>
-                {(newFacebookAccessToken || settings.facebook_access_token) && (
-                  <button 
-                    type="button"
-                    onClick={() => fetchAdAccounts(newFacebookAccessToken || settings.facebook_access_token || '')}
-                    disabled={isFetchingAccounts}
-                    className="text-[10px] font-black text-primary hover:underline uppercase tracking-widest flex items-center gap-1"
-                  >
-                    {isFetchingAccounts ? (
-                      <RefreshCw size={10} className="animate-spin" />
-                    ) : (
-                      <Search size={10} />
-                    )}
-                    {fetchedAdAccounts.length > 0 ? 'Atualizar Lista' : 'Buscar Contas'}
-                  </button>
-                )}
+                <button 
+                  type="button"
+                  onClick={() => fetchAdAccounts(newFacebookAccessToken || settings.facebook_access_token || '')}
+                  disabled={isFetchingAccounts}
+                  className="text-[10px] font-black text-primary hover:underline uppercase tracking-widest flex items-center gap-1"
+                >
+                  {isFetchingAccounts ? (
+                    <RefreshCw size={10} className="animate-spin" />
+                  ) : (
+                    <Search size={10} />
+                  )}
+                  {fetchedAdAccounts.length > 0 ? 'Atualizar Lista' : (newFacebookAccessToken ? 'Buscar Contas' : 'Buscar Contas (Master)')}
+                </button>
               </div>
               
               {fetchedAdAccounts.length > 0 ? (
