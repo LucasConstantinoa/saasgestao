@@ -42,11 +42,9 @@ export const BranchRealTimeDashboard: React.FC<{
       );
       
       if (response.data.success) {
-        // Update local branches state with the new balance
-        setBranches(prev => prev.map(b => 
-          b.id === branchId ? { ...b, balance: response.data.balance } : b
-        ));
-        addToast('success', 'Sincronizado', 'Saldo atualizado com sucesso.');
+        // Refresh all branch data to ensure campaigns and balance are in sync with DB
+        await fetchData();
+        addToast('success', 'Sincronizado', 'Saldo e campanhas atualizados com sucesso.');
       }
     } catch (err) {
       console.error('Error syncing balance:', err);
