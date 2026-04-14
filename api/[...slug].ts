@@ -237,35 +237,49 @@ async function syncBranchBalance(supabaseClient: any, branch: any) {
         const spent = amountSpentVal;
         const cap = spendCapVal;
         
-        let accountBalance = 0;
-        
-        const isPrepaid = data.is_prepaid_account || (data.funding_source_details && data.funding_source_details.balance);
+        // --- BALANCE CALCULATION LOGIC ---
+        const isPrepaid = data.is_prepaid_account || !!(data.funding_source_details && (data.funding_source_details.balance || data.funding_source_details.display_string));
 
-        // Logic Refinement: 
-        if (fundingBalance !== 0) {
-          accountBalance = Math.abs(fundingBalance) / 100;
-        } else if (totalPrepaid !== 0) {
-          accountBalance = Math.abs(totalPrepaid) / 100;
-        } else if (isPrepaid && rawBalance !== 0) {
-          accountBalance = Math.abs(rawBalance) / 100;
-        } else if (rawBalance < 0) {
-          // Even if not explicitly marked prepaid, a negative balance is always a credit (available funds)
-          accountBalance = Math.abs(rawBalance) / 100;
-        } else if (cap > 0) {
-          // Standard Postpaid
-          accountBalance = Math.max(0, (cap - spent) / 100);
+        let accountBalance = 0;
+
+        const parseDisplayValue = (str: string | undefined) => {
+          if (!str) return 0;
+          // Clean the string: remove currency symbols and thousands separators, fix decimal separator
+          const cleaned = str.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
+          return parseFloat(cleaned) || 0;
+        };
+
+        if (isPrepaid) {
+          const fundingVal = data.funding_source_details?.balance ? parseFloat(data.funding_source_details.balance) / 100 : 0;
+          const prepaidVal = data.total_prepaid_balance ? parseFloat(data.total_prepaid_balance) / 100 : 0;
+          const displayVal = parseDisplayValue(data.funding_source_details?.display_string);
+          
+          // Prioritize display_string if others are zero or low, as requested by user
+          accountBalance = fundingVal || prepaidVal || displayVal || (parseFloat(data.balance || "0") / 100);
+          
+          // If the balance from Meta is negative, it's actually credit/available funds in prepaid contexts
+          accountBalance = Math.abs(accountBalance);
         } else {
-          // Default to negative rawBalance (debt) if nothing else applies
-          accountBalance = -rawBalance / 100;
+          // Standard Postpaid logic
+          const rawBalance = parseFloat(data.balance || "0") / 100;
+          const amountSpent = parseFloat(data.amount_spent || "0") / 100;
+          const spendCap = parseFloat(data.spend_cap || "0") / 100;
+
+          if (spendCap > 0) {
+            accountBalance = Math.max(0, spendCap - amountSpent);
+          } else {
+            // Balance is debt for postpaid (usually positive number), so we negate it for "available fuel"
+            accountBalance = -rawBalance;
+          }
         }
         
-        console.log(`[DEBUG_DETAILED] Account ${data.id} (${fundingName}): isPrepaid=${!!isPrepaid}, raw=${rawBalance}, prepaid=${totalPrepaid}, funding=${fundingBalance}. Calculated: ${accountBalance}`);
+        console.log(`[DEBUG_DETAILED] Account ${data.id}: isPrepaid=${isPrepaid}, CalcValue=${accountBalance}`);
         totalBalance += accountBalance;
 
-        // DEBUG LEAK TO AUDIT LOG
+        // DEBUG LOG TO SUPABASE
         await supabaseClient.from('audit_log').insert({
-          action: 'DEBUG_META_SYNC',
-          detail: `Filial ${branch.id} (${data.id}, ${fundingName}): balance=${rawBalance}, prepaid=${totalPrepaid}, funding=${fundingBalance}, isPrepaid=${!!isPrepaid}. Resp: ${JSON.stringify(data).substring(0, 1000)}`,
+          action: 'META_SYNC_VAL',
+          detail: `Account ${data.id} (${data.funding_source_details?.display_string}): calc=${accountBalance}, prepaid=${data.total_prepaid_balance}, funding=${data.funding_source_details?.balance}, raw=${data.balance}`,
           type: 'info'
         });
       } catch (err: any) {
@@ -722,39 +736,33 @@ api.get("/facebook/balance", branchAuth, async (req, res) => {
       const spendCap = isNaN(spendCapVal) ? 0 : spendCapVal / 100;
       const todaySpend = insights.length > 0 ? parseFloat(insights[0].spend || "0") : 0;
 
+      const parseDisplayValue = (str: string | undefined) => {
+        if (!str) return 0;
+        const cleaned = str.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
+        return parseFloat(cleaned) || 0;
+      };
+
       let remainingBalance = 0;
-      const isPrepaid = data.is_prepaid_account || (data.funding_source_details && data.funding_source_details.balance);
+      const isPrepaid = data.is_prepaid_account || !!(data.funding_source_details && (data.funding_source_details.balance || data.funding_source_details.display_string));
       
       if (isPrepaid) {
-        // For prepaid, available funds are in funding_source_details.balance
-        if (data.funding_source_details && data.funding_source_details.balance) {
-          const val = parseFloat(data.funding_source_details.balance);
-          remainingBalance = isNaN(val) ? 0 : val / 100;
-        } else if (balance > 0) {
-          // Sometimes balance is used for prepaid too
-          remainingBalance = balance;
-        } else {
-          // If all else fails for prepaid, it might be 0
-          remainingBalance = 0;
-        }
-      } else {
-        // For postpaid, balance is debt. 
-        remainingBalance = -balance;
+        const fundingVal = data.funding_source_details?.balance ? parseFloat(data.funding_source_details.balance) / 100 : 0;
+        const prepaidVal = data.total_prepaid_balance ? parseFloat(data.total_prepaid_balance) / 100 : 0;
+        const displayVal = parseDisplayValue(data.funding_source_details?.display_string);
         
-        // If spend cap is set, remaining balance is cap - spent
+        remainingBalance = Math.abs(fundingVal || prepaidVal || displayVal || (parseFloat(data.balance || "0") / 100));
+      } else {
+        remainingBalance = - (parseFloat(data.balance || "0") / 100);
         if (data.spend_cap && data.spend_cap !== "0") {
-          remainingBalance = spendCap - amountSpent;
+          remainingBalance = (parseFloat(data.spend_cap) / 100) - (parseFloat(data.amount_spent || "0") / 100);
         }
       }
       
-      // DEBUG: Log the calculation steps
-      console.log(`[DEBUG] Branch ${branchId}, Account ${data.id}: isPrepaid=${isPrepaid}, balanceVal=${balanceVal}, amountSpentVal=${amountSpentVal}, spendCapVal=${spendCapVal}, calculatedRemaining=${remainingBalance}`);
-
-      totalBalance += balance;
-      totalAmountSpent += amountSpent;
-      totalSpendCap += spendCap;
+      totalBalance += parseFloat(data.balance || "0") / 100;
+      totalAmountSpent += parseFloat(data.amount_spent || "0") / 100;
+      totalSpendCap += parseFloat(data.spend_cap || "0") / 100;
       totalRemainingBalance += remainingBalance;
-      totalTodaySpend += todaySpend;
+      totalTodaySpend += insights.length > 0 ? parseFloat(insights[0].spend || "0") : 0;
     });
 
     res.json({

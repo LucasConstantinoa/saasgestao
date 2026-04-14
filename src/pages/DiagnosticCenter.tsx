@@ -123,7 +123,8 @@ const DiagnosticCenter = () => {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) throw new Error('no_session');
         const response = await axios.get('/api/facebook/balance?branchId=1', { headers: { Authorization: `Bearer ${session.access_token}` } });
-        return `Saldo Retornado: ${response.data.facebook_balance || 'Sem Saldo'}`;
+        const { remaining_balance, facebook_balance, account_count } = response.data;
+        return `Disponível: R$ ${remaining_balance?.toFixed(2) || '0.00'} (Bruto: R$ ${facebook_balance?.toFixed(2) || '0.00'}) | Contas: ${account_count || 0}`;
       }}
     ];
 
