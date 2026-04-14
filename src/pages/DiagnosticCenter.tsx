@@ -31,60 +31,81 @@ const DiagnosticCenter = () => {
     const tests = [
       { name: 'audit_log (Admin only)', fn: async () => {
         const { data, error, count } = await supabase.from('audit_log').select('*', { count: 'exact', head: true });
-        if (error) throw new Error(`Query failed: ${error.message}`);
+        if (error) throw Object.assign(new Error(`Query failed: ${error.message}`), error);
         return `Count: ${count || 0}`;
       }},
       { name: 'branches', fn: async () => {
         const { data, error } = await supabase.from('branches').select('id, name, balance, facebook_ad_account_id, facebook_access_token, facebook_bm_id, facebook_bm_name, facebook_funding_source').limit(3);
-        if (error) throw new Error(`Query failed: ${error.message}`);
+        if (error) throw Object.assign(new Error(`Query failed: ${error.message}`), error);
         if (data.length > 0) {
           const hasToken = data.some((b: any) => b.facebook_access_token);
           const hasAccounts = data.some((b: any) => b.facebook_ad_account_id || b.facebook_bm_id);
-          if (!hasAccounts) return 'warning: No Facebook accounts configured';
+          if (!hasAccounts) throw new Error('warning: Nenhuma conta do Facebook configurada');
           return `Count: ${data.length} - Tokens: ${hasToken ? 'OK' : 'MISSING'}`;
         }
-        return 'Empty table';
+        return 'Tabela existe, mas está vazia';
       }},
       { name: 'campaigns', fn: async () => {
         const { data, error, count } = await supabase.from('campaigns').select('*', { count: 'exact', head: true });
-        if (error) throw new Error(`Query failed: ${error.message}`);
+        if (error) throw Object.assign(new Error(`Query failed: ${error.message}`), error);
         return `Count: ${count || 0}`;
       }},
       { name: 'sales', fn: async () => {
         const { data, error, count } = await supabase.from('sales').select('*', { count: 'exact', head: true });
-        if (error) throw new Error(`Query failed: ${error.message}`);
+        if (error) throw Object.assign(new Error(`Query failed: ${error.message}`), error);
         return `Count: ${count || 0}`;
       } },
       { name: 'notifications', fn: async () => {
         const { data, error } = await supabase.from('notifications').select('*').order('id', { ascending: false }).limit(5);
-        if (error) throw new Error(`Query failed: ${error.message}`);
+        if (error) throw Object.assign(new Error(`Query failed: ${error.message}`), error);
         return `Recent: ${data.length} unread: ${data.filter((n: any) => !n.read).length}`;
       }},
       { name: 'user_branch_permissions', fn: async () => {
         const { data, error, count } = await supabase.from('user_branch_permissions').select('*', { count: 'exact', head: true });
-        if (error) throw new Error(`Query failed: ${error.message}`);
+        if (error) throw Object.assign(new Error(`Query failed: ${error.message}`), error);
         return `Count: ${count || 0}`;
       } },
       { name: 'settings', fn: async () => {
         const { data, error } = await supabase.from('settings').select('*');
-        if (error) throw new Error(`Query failed: ${error.message}`);
+        if (error) throw Object.assign(new Error(`Query failed: ${error.message}`), error);
         return `Keys: ${data.length}`;
       }}
     ];
 
-    const results: TestResult[] = [];
     for (const test of tests) {
       const result: TestResult = { name: test.name, status: 'running', message: '' };
       setTestResults(prev => [...prev.filter(r => r.name !== test.name), result]);
       
       try {
         const details = await test.fn();
-        result.status = 'pass';
-        result.message = `✅ ${details}`;
+        if (details.startsWith('warning:')) {
+          result.status = 'warning';
+          result.message = `⚠️ ${details.replace('warning: ', '')}`;
+        } else {
+          result.status = 'pass';
+          result.message = `✅ ${details}`;
+        }
       } catch (error: any) {
         result.status = 'fail';
-        result.message = `❌ ${error.message}`;
-        result.error = error.message;
+        result.message = `❌ Falha no banco de dados`;
+        
+        let errorDetails = error.message || String(error);
+        if (error.code === '42501' || errorDetails.toLowerCase().includes('permission')) {
+          result.message = '❌ Sem Permissão (RLS Policy)';
+          errorDetails = "O usuário atual não possui permissão para acessar esta tabela. O Supabase bloqueou devido às regras de Row Level Security (RLS).";
+        } else if (error.code === '42P01' || errorDetails.toLowerCase().includes('does not exist')) {
+          result.message = '❌ Tabela não existe';
+          errorDetails = "A tabela procurada não pôde ser encontrada no Supabase. Possa ser que ela ainda não tenha sido criada no banco de dados.";
+        } else if (error.code) {
+          result.message = `❌ Erro Supabase: ${error.code}`;
+          errorDetails = `Ocorreu um erro no Supabase: ${errorDetails} \nDetalhes Extras: ${error.details || 'Nenhum'}`;
+        } else if (error.message && error.message.includes('warning:')) {
+          result.status = 'warning';
+          result.message = `⚠️ Aviso`;
+          errorDetails = error.message.replace('warning: ', '');
+        }
+
+        result.error = errorDetails;
       }
       setTestResults(prev => prev.map(r => r.name === test.name ? result : r));
     }
@@ -94,19 +115,18 @@ const DiagnosticCenter = () => {
     const tests = [
       { name: 'Ad Accounts API', fn: async () => {
         const { data: { session } } = await supabase.auth.getSession();
-        if (!session) throw new Error('No session');
+        if (!session) throw new Error('no_session');
         const response = await axios.get('/api/facebook/ad-accounts', { params: { token: 'test' }, headers: { Authorization: `Bearer ${session.access_token}` } });
-        return `Accounts: ${response.data.data?.length || 0}`;
+        return `Contas Retornadas: ${response.data.data?.length || 0}`;
       }},
       { name: 'Balance API', fn: async () => {
         const { data: { session } } = await supabase.auth.getSession();
-        if (!session) throw new Error('No session');
+        if (!session) throw new Error('no_session');
         const response = await axios.get('/api/facebook/balance?branchId=1', { headers: { Authorization: `Bearer ${session.access_token}` } });
-        return `Balance OK: ${response.data.facebook_balance}`;
+        return `Saldo Retornado: ${response.data.facebook_balance || 'Sem Saldo'}`;
       }}
     ];
 
-    const results: TestResult[] = [];
     for (const test of tests) {
       const result: TestResult = { name: test.name, status: 'running', message: '' };
       setTestResults(prev => [...prev.filter(r => r.name !== test.name), result]);
@@ -117,8 +137,31 @@ const DiagnosticCenter = () => {
         result.message = `✅ ${details}`;
       } catch (error: any) {
         result.status = 'fail';
-        result.message = `❌ ${error.message}`;
-        result.error = error.message;
+        result.message = `❌ Falha na API do Facebook`;
+        
+        let errorDetails = error.message || String(error);
+        if (error.message === 'no_session') {
+          errorDetails = "O usuário atual não possui uma sessão válida de autenticação para chamar a API.";
+        } else if (error.response?.status === 404) {
+          result.message = '❌ Rota da API não existe (404)';
+          errorDetails = "A API não retornou resposta porque o endereço (endpoint) não existe ou o servidor está fora do ar. Verifique se o Vercel tem a rota /api/facebook.";
+        } else if (error.response?.status === 403 || error.response?.status === 401) {
+          result.message = `❌ Acesso Negado (Erro ${error.response.status})`;
+          errorDetails = "Não autorizado. O token do Facebook pode ser inválido, estar vencido ou o usuário não tem permissão para acessar estes dados.";
+        } else if (error.response?.status === 500) {
+          result.message = '❌ Erro Interno do Servidor (500)';
+          errorDetails = `Ocorreu um erro dentro da lógica da API do backend. Servidor quebrou durante a execução. Rastreio: ${error.response.data?.message || JSON.stringify(error.response.data) || 'Nenhum erro providenciado'}`;
+        } else if (error.request) {
+          result.message = '❌ Backend não responde';
+          errorDetails = "A requisição enviada não obteve qualquer resposta do servidor. O serviço proxy pode estar inativo ou há um problema de rede bloqueando a conexão.";
+        } else if (errorDetails.toLowerCase().includes('network error')) {
+          result.message = '❌ Erro de Rede';
+          errorDetails = "Falha grave de rede. Sem conexão à internet ou proxy impedindo requisição.";
+        } else if (error.response?.data?.error?.message) {
+          errorDetails = `Erro retornado pelo Facebook: ${error.response.data.error.message}`;
+        }
+
+        result.error = errorDetails;
       }
       setTestResults(prev => prev.map(r => r.name === test.name ? result : r));
     }
