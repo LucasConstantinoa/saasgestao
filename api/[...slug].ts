@@ -445,10 +445,21 @@ api.get("/facebook/ad-accounts", async (req, res) => {
 // Trigger all branches sync
 api.post("/facebook/sync-all", userAuth, async (req, res) => {
   try {
-    await syncAllBranchesBalances();
+    const supabaseClient = (req as any).supabase;
+    console.log("Iniciando sincronização automática de saldos...");
+    const { data: branches } = await supabaseClient
+      .from('branches')
+      .select('id, facebook_ad_account_id, facebook_access_token');
+      
+    if (branches) {
+      for (const branch of branches) {
+        await syncBranchBalance(supabaseClient, branch);
+      }
+    }
+    console.log("Sincronização automática concluída.");
     res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: 'Erro ao sincronizar todas as filiais' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Erro ao sincronizar todas as filiais' });
   }
 });
 
@@ -457,9 +468,8 @@ api.post("/facebook/sync", userAuth, async (req, res) => {
   if (!branchId) return res.status(400).json({ error: 'branchId is required' });
   
   try {
-    // Bypass individual branch permission check for now to fix the 403, 
-    // relying on overall user identification for Lucas.
-    const { data: branch, error } = await supabaseAdmin
+    const supabaseClient = (req as any).supabase;
+    const { data: branch, error } = await supabaseClient
       .from('branches')
       .select('id, facebook_ad_account_id, facebook_access_token')
       .eq('id', branchId)
@@ -467,17 +477,17 @@ api.post("/facebook/sync", userAuth, async (req, res) => {
       
     if (error || !branch) return res.status(404).json({ error: 'Branch not found' });
     
-    await syncBranchBalance(supabaseAdmin, branch);
+    await syncBranchBalance(supabaseClient, branch);
     
-    const { data: updatedBranch } = await supabaseAdmin
+    const { data: updatedBranch } = await supabaseClient
       .from('branches')
       .select('balance')
       .eq('id', branchId)
       .single();
       
     res.json({ success: true, balance: updatedBranch?.balance });
-  } catch (err) {
-    res.status(500).json({ error: 'Erro ao sincronizar filial' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Erro ao sincronizar filial' });
   }
 });
 

@@ -58,7 +58,14 @@ export const BranchRealTimeDashboard: React.FC<{
       // Fallback: reload from Supabase
       const { data: fb } = await supabase.from('branches').select('balance').eq('id', branchId).single();
       if (fb) setBranches(prev => prev.map(b => b.id === branchId ? { ...b, balance: fb.balance } : b));
-      addToast('error', 'Erro Backend API', err.response?.data?.error || err.message || 'Falha ao sincronizar.');
+      
+      const errMsg = typeof err.response?.data?.error === 'string' 
+        ? err.response.data.error 
+        : err.response?.data?.error?.message 
+          || err.message 
+          || 'Falha ao sincronizar.';
+          
+      addToast('error', 'Erro Backend API', errMsg);
     } finally {
       setSyncingBranches(prev => { const n = new Set(prev); n.delete(branchId); return n; });
     }
