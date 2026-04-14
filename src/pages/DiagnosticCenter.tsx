@@ -113,57 +113,36 @@ const DiagnosticCenter = () => {
 
   const runFacebookTests = async () => {
     const tests = [
-      { name: 'Ad Accounts API (Direto)', fn: async () => {
-        const { data: settingsRow } = await supabase.from('settings').select('value').eq('key', 'facebook_access_token').single();
-        const token = settingsRow?.value;
-        if (!token) throw new Error('Token do Facebook não encontrado nas configurações.');
-        const response = await axios.get('https://graph.facebook.com/v22.0/me/adaccounts', { params: { access_token: token, fields: 'name,account_id,id', limit: 500 } });
+      { name: 'Ad Accounts API', fn: async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) throw new Error('no_session');
+        const response = await axios.get('/api/facebook/ad-accounts', { params: { token: 'test' }, headers: { Authorization: `Bearer ${session.access_token}` }, timeout: 15000 });
         return `Contas Retornadas: ${response.data.data?.length || 0}`;
       }},
       { name: 'Balance API (Saldos por Filial)', fn: async () => {
-        const { data: settingsRow } = await supabase.from('settings').select('value').eq('key', 'facebook_access_token').single();
-        const globalToken = settingsRow?.value;
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) throw new Error('no_session');
         
         const activeBranches = (branches || []).filter(b => b.facebook_ad_account_id);
         if (activeBranches.length === 0) return 'warning: Nenhuma filial conectada ao Facebook Ads encontrada.';
-
-        const parseDisplayValue = (str: string | undefined) => {
-          if (!str) return 0;
-          const cleaned = str.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
-          return parseFloat(cleaned) || 0;
-        };
         
         const branchResults = await Promise.all(activeBranches.map(async (branch) => {
           try {
-            const token = branch.facebook_access_token || globalToken;
-            if (!token) return { name: branch.name, status: 'fail', value: 0, msg: 'Sem token de acesso' };
-
-            const adAccountIds = (branch.facebook_ad_account_id || '').split(',').map((id: string) => id.trim().split('|')[0].replace('act_', '')).filter(Boolean);
-            let branchBalance = 0;
-
-            for (const cleanId of adAccountIds) {
-              const res = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
-                params: { access_token: token, fields: 'balance,is_prepaid_account,funding_source_details{id,display_string,balance,type},spend_cap,amount_spent,total_prepaid_balance' }
-              });
-              const data = res.data;
-              const isPrepaid = data.is_prepaid_account || !!(data.funding_source_details && (data.funding_source_details.balance || data.funding_source_details.display_string));
-              
-              if (isPrepaid) {
-                const fundingVal = data.funding_source_details?.balance ? parseFloat(data.funding_source_details.balance) / 100 : 0;
-                const prepaidVal = data.total_prepaid_balance ? parseFloat(data.total_prepaid_balance) / 100 : 0;
-                const displayVal = parseDisplayValue(data.funding_source_details?.display_string);
-                branchBalance += Math.abs(fundingVal || prepaidVal || displayVal || (parseFloat(data.balance || "0") / 100));
-              } else {
-                const rawBal = parseFloat(data.balance || "0") / 100;
-                const spent = parseFloat(data.amount_spent || "0") / 100;
-                const cap = parseFloat(data.spend_cap || "0") / 100;
-                branchBalance += cap > 0 ? Math.max(0, cap - spent) : -rawBal;
-              }
-            }
-
-            return { name: branch.name, status: 'pass', value: branchBalance, msg: `R$ ${branchBalance.toFixed(2)} (${adAccountIds.length} conta/s)` };
+            const res = await axios.get(`/api/facebook/balance?branchId=${branch.id}`, { headers: { Authorization: `Bearer ${session.access_token}` }, timeout: 20000 });
+            const { remaining_balance, account_count } = res.data;
+            return {
+              name: branch.name,
+              status: 'pass',
+              value: parseFloat(remaining_balance) || 0,
+              msg: `R$ ${(parseFloat(remaining_balance) || 0).toFixed(2)} (${account_count} conta/s)`
+            };
           } catch (e: any) {
-            return { name: branch.name, status: 'fail', value: 0, msg: `Falha: ${e.response?.data?.error?.message || e.message}` };
+            return {
+              name: branch.name,
+              status: 'fail',
+              value: 0,
+              msg: `Falha: ${e.response?.data?.error || e.message}`
+            };
           }
         }));
 

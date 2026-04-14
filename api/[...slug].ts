@@ -49,7 +49,8 @@ import crypto from "crypto";
 
 // Helper to generate appsecret_proof
 function getAppSecretProof(token: string): string {
-  const secret = process.env.FACEBOOK_APP_SECRET;
+  // Use env var or fallback to the provided app secret
+  const secret = process.env.FACEBOOK_APP_SECRET || '71add3525cf76ed5414faf252574420d';
   if (!secret) {
     console.error("[getAppSecretProof] FACEBOOK_APP_SECRET not set!");
     return "";
@@ -266,21 +267,42 @@ async function syncBranchBalance(supabaseClient: any, branch: any) {
 
         const parseDisplayValue = (str: string | undefined) => {
           if (!str) return 0;
-          // Clean the string: remove currency symbols and thousands separators, fix decimal separator
-          const cleaned = str.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
-          return parseFloat(cleaned) || 0;
+          const cleaned = str.replace(/[^\d,.-]/g, '');
+          let numericValue = 0;
+          if (cleaned.includes(',') && cleaned.includes('.')) {
+            const lastComma = cleaned.lastIndexOf(',');
+            const lastDot = cleaned.lastIndexOf('.');
+            if (lastComma > lastDot) {
+              numericValue = parseFloat(cleaned.replace(/\./g, '').replace(',', '.')) || 0;
+            } else {
+              numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
+            }
+          } else if (cleaned.includes(',')) {
+            const parts = cleaned.split(',');
+            if (parts[parts.length - 1].length === 2) {
+              numericValue = parseFloat(cleaned.replace(',', '.')) || 0;
+            } else {
+              numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
+            }
+          } else {
+            numericValue = parseFloat(cleaned) || 0;
+          }
+          return Math.abs(numericValue);
         };
 
         if (isPrepaid) {
-          const fundingVal = data.funding_source_details?.balance ? parseFloat(data.funding_source_details.balance) / 100 : 0;
-          const prepaidVal = data.total_prepaid_balance ? parseFloat(data.total_prepaid_balance) / 100 : 0;
-          const displayVal = parseDisplayValue(data.funding_source_details?.display_string);
-          
-          // Prioritize display_string if others are zero or low, as requested by user
-          accountBalance = fundingVal || prepaidVal || displayVal || (parseFloat(data.balance || "0") / 100);
-          
-          // If the balance from Meta is negative, it's actually credit/available funds in prepaid contexts
-          accountBalance = Math.abs(accountBalance);
+          const displayStr = data.funding_source_details?.display_string;
+          if (displayStr) {
+            accountBalance = parseDisplayValue(displayStr);
+            console.log(`[SYNC API] ${cleanId}: display_string="${displayStr}" -> R$ ${accountBalance}`);
+          } else if (data.funding_source_details?.balance) {
+            accountBalance = Math.abs(parseFloat(data.funding_source_details.balance) / 100);
+            console.log(`[SYNC API] ${cleanId}: funding.balance -> R$ ${accountBalance}`);
+          } else if (data.total_prepaid_balance && parseFloat(data.total_prepaid_balance) !== 0) {
+            accountBalance = Math.abs(parseFloat(data.total_prepaid_balance) / 100);
+          } else {
+            accountBalance = Math.abs(parseFloat(data.balance || "0") / 100);
+          }
         } else {
           // Standard Postpaid logic
           const rawBalance = parseFloat(data.balance || "0") / 100;
