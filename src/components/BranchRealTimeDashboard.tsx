@@ -33,22 +33,10 @@ export const BranchRealTimeDashboard: React.FC<{
   const handleSyncBranch = async (branchId: number) => {
     setSyncingBranches(prev => new Set(prev).add(branchId));
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) {
-        addToast('error', 'Sem sessão', 'Você precisa estar logado para sincronizar.');
-        return;
-      }
-
-      // We MUST use the backend API because Facebook requires 'appsecret_proof', 
-      // which can only be generated securely on the server using the App Secret
-      const response = await axios.post('/api/sync-branch', 
-        { branchId },
-        { headers: { Authorization: `Bearer ${session.access_token}` }, timeout: 15000 }
-      );
+      // Calling the dedicated high-reliability endpoint (same as App.tsx)
+      const response = await axios.get(`/api/sync-branch?branchId=${branchId}`);
       
       if (response.data.success) {
-        console.log('[DEBUG SYNC] Full response data:', response.data);
         setBranches(prev => prev.map(b =>
           b.id === branchId ? { ...b, balance: response.data.balance, updated_at: new Date().toISOString() } : b
         ));
@@ -56,17 +44,10 @@ export const BranchRealTimeDashboard: React.FC<{
       }
     } catch (err: any) {
       console.error('Sync error:', err);
-      // Fallback: reload from Supabase
+      // Fallback: relax and reload from Supabase
       const { data: fb } = await supabase.from('branches').select('balance').eq('id', branchId).single();
       if (fb) setBranches(prev => prev.map(b => b.id === branchId ? { ...b, balance: fb.balance } : b));
-      
-      const errMsg = typeof err.response?.data?.error === 'string' 
-        ? err.response.data.error 
-        : err.response?.data?.error?.message 
-          || err.message 
-          || 'Falha ao sincronizar.';
-          
-      addToast('error', 'Erro Backend API', errMsg);
+      addToast('error', 'Erro Backend API', err.response?.data?.error || 'Não foi possível sincronizar agora.');
     } finally {
       setSyncingBranches(prev => { const n = new Set(prev); n.delete(branchId); return n; });
     }
