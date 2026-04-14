@@ -43,43 +43,87 @@ async function syncBranchBalance(supabase: any, branch: any) {
 
     const adAccountIds = (branch.facebook_ad_account_id || '').split(',').map((id: string) => id.trim().split('|')[0].replace('act_', '')).filter(Boolean);
     let totalBalance = 0;
+    let allCampaigns: any[] = [];
+
+    const proof = getAppSecretProof(token);
 
     for (const cleanId of adAccountIds) {
       try {
-        const proof = getAppSecretProof(token);
+        // Sync Balance
         const response = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
-          params: {
-            access_token: token,
-            appsecret_proof: proof,
-            fields: 'name,funding_source_details,currency'
-          }
+          params: { access_token: token, appsecret_proof: proof, fields: 'name,funding_source_details,currency' }
         });
         const d = response.data;
         const displayStr = d.funding_source_details?.display_string;
-        const fundingBal = d.funding_source_details?.balance;
+        if (displayStr) totalBalance += parseDisplayValue(displayStr);
+        else if (d.funding_source_details?.balance) totalBalance += Math.abs(parseFloat(d.funding_source_details.balance) / 100);
 
-        if (displayStr) {
-          totalBalance += parseDisplayValue(displayStr);
-        } else if (fundingBal) {
-          totalBalance += Math.abs(parseFloat(fundingBal) / 100);
-        }
+        // Sync Campaigns
+        const campRes = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}/campaigns`, {
+          params: { access_token: token, appsecret_proof: proof, fields: 'id,name,status,objective,daily_budget' }
+        });
+        (campRes.data.data || []).forEach((c: any) => {
+          allCampaigns.push({
+            branch_id: branch.id,
+            meta_campaign_id: c.id,
+            name: c.name,
+            status: c.status?.toLowerCase() === 'active' ? 'active' : 'paused',
+            spend: parseFloat(c.daily_budget || "0") / 100,
+            purpose: c.objective?.toLowerCase().includes('sales') ? 'vendas' : 'leads'
+          });
+        });
       } catch (e: any) {
         console.error(`Error in account ${cleanId}:`, e.message);
       }
     }
 
-    await supabase.from('branches').update({ 
-      balance: totalBalance, 
-      updated_at: new Date().toISOString() 
-    }).eq('id', branch.id);
+    // Update Branch
+    await supabase.from('branches').update({ balance: totalBalance, updated_at: new Date().toISOString() }).eq('id', branch.id);
     
-    console.log(`Branch ${branch.name} updated to R$ ${totalBalance}`);
+    // Update Campaigns (Clean and Insert)
+    if (allCampaigns.length > 0) {
+      await supabase.from('campaigns').delete().eq('branch_id', branch.id);
+      await supabase.from('campaigns').insert(allCampaigns);
+    }
+    
+    console.log(`Branch ${branch.name} synced: R$ ${totalBalance}, ${allCampaigns.length} campaigns.`);
   } catch (err: any) {
     console.error(`Sync error for branch ${branch.id}:`, err.message);
   }
 }
 
 // ENDPOINTS
+app.post("/api/facebook/toggle-campaign", async (req, res) => {
+  const { campaignId, branchId, status } = req.body;
+  if (!campaignId || !branchId || !status) return res.status(400).json({ error: 'Missing params' });
+
+  try {
+    const { data: b } = await supabaseAdmin.from('branches').select('facebook_access_token').eq('id', branchId).single();
+    let token = b?.facebook_access_token;
+    if (!token) {
+      const { data: s } = await supabaseAdmin.from('settings').select('value').eq('key', 'facebook_access_token').single();
+      token = s?.value;
+    }
+    if (!token) throw new Error("Token not found");
+
+    const proof = getAppSecretProof(token);
+    const fbStatus = status === 'active' ? 'ACTIVE' : 'PAUSED';
+
+    await axios.post(`https://graph.facebook.com/v22.0/${campaignId}`, {
+      status: fbStatus,
+      access_token: token,
+      appsecret_proof: proof
+    });
+
+    // Update local DB
+    await supabaseAdmin.from('campaigns').update({ status }).eq('meta_campaign_id', campaignId);
+
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("Toggle Campaign Error:", err.response?.data || err.message);
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+  }
+});
 app.post("/api/facebook/sync", async (req, res) => {
   const { branchId } = req.body;
   if (!branchId) return res.status(400).json({ error: 'Missing branchId' });

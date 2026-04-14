@@ -371,6 +371,7 @@ export default function App() {
   const [newCompanyType, setNewCompanyType] = useState<'association' | 'direct_sales'>('direct_sales');
   const [newLogo, setNewLogo] = useState('');
   const [newWhatsapp, setNewWhatsapp] = useState('');
+  const [campaignStatusFilter, setCampaignStatusFilter] = useState<'all' | 'active' | 'paused'>('all');
 
   const { addToast } = useToasts();
   const checkedBranchesRef = React.useRef<Set<number>>(new Set());
@@ -821,66 +822,40 @@ export default function App() {
     }
     if (!selectedBranch) return;
 
-      const newStatus = campaign.status === 'paused' ? 'active' : 'paused';
+    const newStatus = campaign.status === 'paused' ? 'active' : 'paused';
+    
+    try {
+      if (campaign.meta_campaign_id) {
+        await axios.post(`/api/facebook/toggle-campaign`, {
+          branchId: selectedBranch.id,
+          campaignId: campaign.meta_campaign_id,
+          status: newStatus
+        });
+      }
+
       const newCampaigns = (campaigns || []).map(c => c && c.id === campaign.id ? { ...c, status: newStatus } : c);
       const newDailyRate = calculateDailySpend(newCampaigns.filter(c => c && c.branch_id === selectedBranch.id));
 
-      try {
-        // Update branch daily_expense in DB
-        const { data: updatedBranch, error } = await supabase
-          .from('branches')
-          .update({ 
-            daily_expense: newDailyRate,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', selectedBranch.id)
-          .select()
-          .single();
-
-      if (error) throw error;
-
-      if (campaign.meta_campaign_id) {
-        try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session) {
-            await axios.patch(`/api/campaigns/${campaign.meta_campaign_id}`, {
-              branchId: selectedBranch.id,
-              status: newStatus === 'active' ? 'ACTIVE' : 'PAUSED'
-            }, {
-              headers: { Authorization: `Bearer ${session.access_token}` }
-            });
-          }
-        } catch (err: any) {
-          console.error("Error updating meta campaign status:", err);
-          addToast('error', 'Erro no Meta Ads', 'Não foi possível atualizar o status no Facebook.');
-          return; // Stop update if Meta fails
-        }
-      }
-
-      // Update campaign status
-      const { data: updatedCampaign, error: updateCampaignError } = await supabase
-        .from('campaigns')
-        .update({ status: newStatus })
-        .eq('id', campaign.id)
+      const { data: updatedBranch, error } = await supabase
+        .from('branches')
+        .update({ daily_expense: newDailyRate, updated_at: new Date().toISOString() })
+        .eq('id', selectedBranch.id)
         .select()
         .single();
 
-      if (updateCampaignError) throw updateCampaignError;
+      if (error) throw error;
+      
+      const { error: campError } = await supabase.from('campaigns').update({ status: newStatus }).eq('id', campaign.id);
+      if (campError) throw campError;
 
-      setCampaigns(prev => prev.map(c => c.id === campaign.id ? updatedCampaign : c));
+      setCampaigns(newCampaigns);
       setBranches(prev => prev.map(b => b.id === selectedBranch.id ? updatedBranch : b));
       setSelectedBranch(updatedBranch);
 
-      addToast('success', `Campanha ${newStatus === 'paused' ? 'pausada' : 'ativada'}`, `"${campaign.name}" foi ${newStatus === 'paused' ? 'pausada' : 'ativada'} com sucesso.`);
-      
-      await supabase.from('audit_log').insert({
-        action: `Campanha ${newStatus === 'paused' ? 'pausada' : 'ativada'}`,
-        detail: `Campanha "${campaign.name}" em ${selectedBranch.name}`,
-        type: 'info'
-      });
-    } catch (error) {
-      console.error('Toggle campaign status error:', error);
-      addToast('error', 'Erro ao alterar status', 'Ocorreu um erro ao tentar alterar o status da campanha.');
+      addToast('success', 'Status alterado', `Campanha ${newStatus === 'active' ? 'ativada' : 'pausada'} no Facebook.`);
+    } catch (error: any) {
+      console.error('Toggle Campaign Error:', error);
+      addToast('error', 'Erro ao alterar status', error.response?.data?.error || error.message);
     }
   };
 
@@ -1697,15 +1672,29 @@ export default function App() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold tracking-tight">Campanhas Ativas</h3>
-            {canManageSelectedBranch && (
-              <button onClick={() => setIsNewCampaignModalOpen(true)} className="btn-primary flex items-center gap-2 text-xs">
-                <Plus size={16} />
-                <span className="hidden sm:inline">Nova Campanha</span>
-                <span className="sm:hidden">Nova</span>
-              </button>
-            )}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-4">
+            <h3 className="text-lg font-bold tracking-tight">Campanhas Ads</h3>
+            <div className="flex items-center gap-4 w-full sm:w-auto">
+              <div className="flex items-center gap-2 flex-1 sm:flex-none">
+                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest whitespace-nowrap">Status:</span>
+                <select 
+                  value={campaignStatusFilter}
+                  onChange={(e) => setCampaignStatusFilter(e.target.value as any)}
+                  className="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs font-bold focus:outline-none focus:border-primary transition-all w-full"
+                >
+                  <option value="all">Todas</option>
+                  <option value="active">Ativas</option>
+                  <option value="paused">Pausadas</option>
+                </select>
+              </div>
+              {canManageSelectedBranch && (
+                <button onClick={() => setIsNewCampaignModalOpen(true)} className="btn-primary flex items-center gap-2 text-xs h-9">
+                  <Plus size={16} />
+                  <span className="hidden sm:inline">Nova Campanha</span>
+                  <span className="sm:hidden">Nova</span>
+                </button>
+              )}
+            </div>
           </div>
           
           <Card className="p-0 overflow-hidden" animateBorder={true}>
@@ -1720,12 +1709,18 @@ export default function App() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {branchCampaigns.length === 0 ? (
+                {branchCampaigns
+                  .filter(c => campaignStatusFilter === 'all' || c.status === campaignStatusFilter)
+                  .length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground italic">Nenhuma campanha cadastrada</td>
+                    <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground italic">
+                      {campaignStatusFilter === 'all' ? 'Nenhuma campanha cadastrada' : `Nenhuma campanha ${campaignStatusFilter === 'active' ? 'ativa' : 'pausada'} encontrada`}
+                    </td>
                   </tr>
                 ) : (
-                  branchCampaigns.map(c => (
+                  branchCampaigns
+                    .filter(c => campaignStatusFilter === 'all' || c.status === campaignStatusFilter)
+                    .map(c => (
                     <motion.tr 
                       key={c.id} 
                       layout
