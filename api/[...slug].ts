@@ -377,7 +377,7 @@ if (!process.env.VERCEL) {
 }
 
 // Proxy for direct FB API calls with security signatures
-api.get(["/facebook/ad-accounts", "/api/facebook/ad-accounts"], async (req, res) => {
+api.get("/facebook/ad-accounts", async (req, res) => {
   try {
     const token = req.query.token as string;
     if (!token) return res.status(400).json({ error: "Token is required" });
@@ -399,15 +399,8 @@ api.get(["/facebook/ad-accounts", "/api/facebook/ad-accounts"], async (req, res)
 });
 
 // Trigger all branches sync
-api.all("/facebook/sync-all", (req, res, next) => {
-  if (req.method === 'POST') return next();
-  console.log(`[API Router] Method ${req.method} not allowed for /facebook/sync-all`);
-  res.status(405).json({ error: `Method ${req.method} not allowed for /facebook/sync-all` });
-});
-
-api.post(["/facebook/sync-all", "/api/facebook/sync-all"], userAuth, async (req, res) => {
+api.post("/facebook/sync-all", userAuth, async (req, res) => {
   try {
-    // Basic sync for now, let it run sync for all for Lucas
     await syncAllBranchesBalances();
     res.json({ success: true });
   } catch (err) {
@@ -415,7 +408,7 @@ api.post(["/facebook/sync-all", "/api/facebook/sync-all"], userAuth, async (req,
   }
 });
 
-api.post(["/facebook/sync", "/api/facebook/sync"], userAuth, async (req, res) => {
+api.post("/facebook/sync", userAuth, async (req, res) => {
   const { branchId } = req.body;
   if (!branchId) return res.status(400).json({ error: 'branchId is required' });
   
@@ -986,8 +979,7 @@ api.all("*", (req, res) => {
   });
 });
 
-// Mount the API router at both /api and root to handle different environments
-app.use("/api", api);
+// Mount the API router - URL normalization middleware already strips /api/ prefix
 app.use("/", api);
 
 // Catch-all route for API to debug 404s
