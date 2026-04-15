@@ -76,80 +76,37 @@ const generateAppSecretProof = async (accessToken: string): Promise<string> => {
 };
 
 export const syncBranchBalanceDirect = async (branchId: number): Promise<{ success: boolean; balance: number }> => {
-  console.log('🚀 === SYNC BRANCH DIRECT START === ID:', branchId);
+  console.log('🚀 === SYNC BRANCH PROXY START === ID:', branchId);
   try {
-    // Get branch with admin client
-    const { data: branch } = await supabaseAdmin
-      .from('branches')
-      .select('*')
-      .eq('id', branchId)
-      .single();
-
-    if (!branch) throw new Error('Branch not found');
-    if (!branch.facebook_ad_account_id) throw new Error('No ad account ID');
-
-    const fbToken = branch.facebook_access_token || 
-      (await supabaseAdmin.from('settings').select('value').eq('key', 'facebook_access_token').single())?.data?.value;
-
-    if (!fbToken) throw new Error('Facebook token not found');
-
-    const adAccountIds = (branch.facebook_ad_account_id || '')
-      .split(',')
-      .map(id => id.trim().split('|')[0].replace('act_', ''))
-      .filter(Boolean);
-
-    let totalBalance = 0;
-
-    for (const cleanId of adAccountIds) {
-      const proof = await generateAppSecretProof(fbToken);
-      
-      const params = new URLSearchParams({
-        access_token: fbToken,
-        appsecret_proof: proof,
-        fields: 'funding_source_details'
-      });
-      
-      const response = await fetch(`https://graph.facebook.com/v22.0/act_${cleanId}?${params}`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      if (!response.ok) {
-        console.error(`FB API error ${cleanId}:`, response.status, await response.text());
-        continue;
-      }
-      
-      const data = await response.json();
-      console.log(`[DEBUG ${cleanId}] display_string:`, data.funding_source_details?.display_string);
-      
-      const displayStr = data.funding_source_details?.display_string;
-      
-      let accountVal = 0;
-      if (displayStr) {
-        accountVal = parseDisplayValue(displayStr);
-        console.log(`[SYNC DIRECT ONLY-DISPLAY ${cleanId}] Derived R$ ${accountVal.toFixed(2)} from display_string: "${displayStr}"`);
-      } else {
-        console.warn(`[SYNC DIRECT ONLY-DISPLAY ${cleanId}] display_string MISSING. Details:`, data.funding_source_details);
-      }
-      
-      totalBalance += accountVal;
+    // We use the proxy API to avoid CORS and keep the app secret safe on the server
+    const sessionStr = localStorage.getItem('supabase.auth.token');
+    let token = '';
+    if (sessionStr) {
+      try {
+        const session = JSON.parse(sessionStr);
+        token = session.currentSession?.access_token || '';
+      } catch (e) {}
     }
 
-    // Update branch balance
-    const { error } = await supabaseAdmin
-      .from('branches')
-      .update({ 
-        balance: totalBalance, 
-        updated_at: new Date().toISOString() 
-      })
-      .eq('id', branchId);
+    const response = await fetch('/api/sync-branch', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ branchId })
+    });
 
-    if (error) throw error;
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || `Erro na API: ${response.status}`);
+    }
 
-    return { success: true, balance: totalBalance };
+    const data = await response.json();
+    return { success: true, balance: data.balance };
   } catch (error: any) {
-    console.error('Direct sync error:', error);
-    throw new Error(error.message || 'Sync failed');
+    console.error('Proxy sync error:', error);
+    throw new Error(error.message || 'Falha na sincronização via servidor.');
   }
 };
 
