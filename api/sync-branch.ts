@@ -102,7 +102,7 @@ export default async function handler(req: any, res: any) {
           params: {
             access_token: fbToken,
             appsecret_proof: proof,
-            fields: 'name,funding_source_details,currency,account_status,balance,total_prepaid_balance'
+            fields: 'name,funding_source_details,currency,account_status,balance,total_prepaid_balance,is_prepaid_account,remaining_balance'
           },
           timeout: 15000
         });
@@ -120,18 +120,18 @@ export default async function handler(req: any, res: any) {
         if (displayStr) {
           accountVal = parseDisplayValue(displayStr);
         } else if (d.total_prepaid_balance) {
-          // Fallback 1: Total Prepaid Balance
           accountVal = Math.abs(parseFloat(d.total_prepaid_balance) / 100);
         } else if (d.balance !== undefined) {
-          // Fallback 2: Regular balance (usually prepaid balance is negative "balance" in cents or similar)
           accountVal = Math.abs(parseFloat(d.balance) / 100);
+        } else if (d.remaining_balance) {
+          accountVal = Math.abs(parseFloat(d.remaining_balance) / 100);
         }
 
         totalBalance += accountVal;
         debugInfo.push({
           id: cleanId,
           name: d.name,
-          display: displayStr,
+          raw: d, // Sending raw data back for debugging if needed
           calculated: accountVal
         });
       } catch (accErr: any) {

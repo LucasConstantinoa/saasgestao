@@ -626,6 +626,7 @@ export default function App() {
       });
       
       if (response.data.success) {
+        console.log('✅ SYNC SUCCESS. Debug Data:', response.data.debug);
         setBranches(prev => prev.map(b => 
           b.id === selectedBranch.id ? { ...b, balance: response.data.balance } : b
         ));
