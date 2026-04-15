@@ -40,6 +40,15 @@ export default async function handler(req: any, res: any) {
     
     else if (req.method === 'POST') {
       const { user_id, branch_id, permission_level, granular_permissions } = req.body;
+      if (permission_level === 'none') {
+        const { error } = await supabaseAdmin
+          .from('user_branch_permissions')
+          .delete()
+          .eq('user_id', user_id)
+          .eq('branch_id', branch_id);
+        if (error) throw error;
+        return res.json({ success: true, permission_level: 'none' });
+      }
       const { data, error } = await supabaseAdmin
         .from('user_branch_permissions')
         .upsert({ 
@@ -53,6 +62,16 @@ export default async function handler(req: any, res: any) {
         
       if (error) throw error;
       return res.json(data);
+    } else if (req.method === 'DELETE') {
+      const { user_id, branch_id } = req.query;
+      if (!user_id || !branch_id) return res.status(400).json({ error: 'Missing user_id or branch_id' });
+      const { error } = await supabaseAdmin
+        .from('user_branch_permissions')
+        .delete()
+        .eq('user_id', user_id)
+        .eq('branch_id', parseInt(branch_id as string));
+      if (error) throw error;
+      return res.json({ success: true });
     }
     
     return res.status(405).json({ error: 'Method not allowed' });

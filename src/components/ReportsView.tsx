@@ -207,15 +207,10 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
     setIsFetchingFacebook(true);
     try {
       // Use the server proxy to avoid CORS and stay secure
-      const response = await axios.get(`/api/facebook/insights`, {
-        params: {
-          accountIds,
-          token: (token && token.length > 10) ? token : 'test',
-          since: start,
-          until: end,
-          fields: 'campaign_name,reach,impressions,clicks,spend,actions',
-          level: 'campaign'
-        }
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await axios.post(`/api/reports/${branch.id}`, {
+        start,
+        end
       });
       
       const data = response.data.data;
@@ -367,13 +362,9 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
         const branch = branches.find(b => b.id === branchId);
         if (!branch) continue;
 
-        const response = await axios.get(`/api/facebook/insights`, {
-          params: {
-            accountIds: branch.facebook_ad_account_id,
-            token: (branch.facebook_access_token && branch.facebook_access_token.length > 10) ? branch.facebook_access_token : 'test',
-            since: globalStart,
-            until: globalEnd
-          }
+        const response = await axios.post(`/api/reports/${branchId}`, {
+          start: globalStart,
+          end: globalEnd
         });
 
         const data = response.data.data;

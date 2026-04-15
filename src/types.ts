@@ -126,6 +126,17 @@ export interface SecurityLog {
   created_at: string;
 }
 
+export type PermissionLevel = 'none' | 'view' | 'reports_only' | 'add_sale' | 'edit';
+
+export interface UserBranchPermission {
+  id: number;
+  user_id: string;
+  branch_id: number;
+  permission_level: PermissionLevel;
+  granular_permissions: Record<string, boolean>;
+  created_at: string;
+}
+
 export interface FacebookConnection {
   id: string;
   branch_id: number;

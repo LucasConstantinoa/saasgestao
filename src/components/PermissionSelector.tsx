@@ -1,4 +1,5 @@
 import React from 'react';
+import { Eye, Edit3, Lock, X, ShieldCheck } from 'lucide-react';
 import { Building2 } from 'lucide-react';
 import { Branch, Company } from '@/types';
 import { cn } from '@/lib/utils';
@@ -44,19 +45,25 @@ export const PermissionSelector = ({ userId, branches, companies, permissions, o
                 }
 
                 return (
-                  <div key={branch.id} className="p-4 rounded-xl bg-muted/30 border border-border flex items-center justify-between">
+                  <div key={branch.id} className="p-4 rounded-xl bg-muted/30 border border-border hover:border-primary/50 transition-colors flex items-center justify-between group">
                     <span className="text-sm font-medium text-foreground">{branch.name}</span>
-                    <select
-                      value={perm.level}
-                      onChange={(e) => onPermissionChange(userId, branch.id, e.target.value, {})}
-                      className="p-2 bg-surface border border-border rounded-lg text-xs font-bold text-foreground focus:ring-2 focus:ring-primary outline-none"
-                    >
-                      <option value="none">Sem acesso</option>
-                      <option value="view">Visualizar (Leitura)</option>
-                      <option value="reports_only">Somente Relatórios</option>
-                      <option value="add_sale">Operador (Add Vendas)</option>
-                      <option value="edit">Administrador da Unidade</option>
-                    </select>
+                    <div className="flex items-center gap-2">
+                      {perm.level === 'none' && <Lock className="text-destructive h-4 w-4 shrink-0" title="Sem acesso" />}
+                      {perm.level === 'view' && <Eye className="text-blue-500 h-4 w-4 shrink-0" title="Visualizar apenas (sem alterar)" />}
+                      {perm.level === 'edit' && <Edit3 className="text-emerald-500 h-4 w-4 shrink-0" title="Pode editar tudo" />}
+                      {perm.level === 'reports_only' && <ShieldCheck className="text-amber-500 h-4 w-4 shrink-0" title="Relatórios apenas" />}
+                      <select
+                        value={perm.level}
+                        onChange={(e) => onPermissionChange(userId, branch.id, e.target.value, {})}
+                        className="p-2 bg-surface border border-border/50 rounded-lg text-xs font-bold text-foreground focus:ring-2 focus:ring-primary outline-none hover:border-primary/50 group-hover:bg-surface/80"
+                      >
+                        <option value="none">🔒 Sem acesso</option>
+                        <option value="view">👁️ Visualizar (sem alterar)</option>
+                        <option value="reports_only">📊 Relatórios</option>
+                        <option value="add_sale">💰 Vendas</option>
+                        <option value="edit">✏️ Admin Filial</option>
+                      </select>
+                    </div>
                   </div>
                 );
               })}
