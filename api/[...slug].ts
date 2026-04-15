@@ -71,33 +71,80 @@ async function syncBranchBalance(supabase: any, branch: any) {
 
     for (const cleanId of adAccountIds) {
       try {
-        // Sync Balance
-        const response = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
-          params: { access_token: token, appsecret_proof: proof, fields: 'name,funding_source_details,currency,balance,total_prepaid_balance,spend_cap,amount_spent,remaining_balance' }
-        });
-        const d = response.data;
+        // SURGICAL CHAIN: We try one by one to avoid API Erro #100
         let accountVal = 0;
-        const displayStr = d.funding_source_details?.display_string;
-        
-        if (displayStr) {
-          accountVal = parseDisplayValue(displayStr);
-        } else if (d.total_prepaid_balance) {
-          accountVal = Math.abs(parseFloat(d.total_prepaid_balance) / 100);
-        } else if (d.balance !== undefined && parseFloat(d.balance) !== 0) {
-          accountVal = Math.abs(parseFloat(d.balance) / 100);
-        } else if (d.remaining_balance) {
-          accountVal = Math.abs(parseFloat(d.remaining_balance) / 100);
-        } else if (d.spend_cap && d.amount_spent) {
-          const cap = parseFloat(d.spend_cap);
-          const spent = parseFloat(d.amount_spent);
-          if (cap > 0 && cap > spent) {
-            accountVal = (cap - spent) / 100;
+        let successFound = false;
+
+        // STEP 1: Funding (Best quality)
+        try {
+          const res1 = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+            params: { access_token: token, appsecret_proof: proof, fields: 'name,funding_source_details,currency,account_status' },
+            timeout: 10000
+          });
+          const displayStr = res1.data.funding_source_details?.display_string;
+          if (displayStr) {
+            accountVal = parseDisplayValue(displayStr);
+            if (accountVal > 0) successFound = true;
           }
+        } catch (e) {}
+
+        // STEP 2: Prepaid
+        if (!successFound) {
+          try {
+            const res2 = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+              params: { access_token: token, appsecret_proof: proof, fields: 'total_prepaid_balance' }
+            });
+            if (res2.data.total_prepaid_balance) {
+              accountVal = Math.abs(parseFloat(res2.data.total_prepaid_balance) / 100);
+              if (accountVal > 0) successFound = true;
+            }
+          } catch (e) {}
+        }
+
+        // STEP 3: Remaining
+        if (!successFound) {
+          try {
+            const res3 = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+              params: { access_token: token, appsecret_proof: proof, fields: 'remaining_balance' }
+            });
+            if (res3.data.remaining_balance) {
+              accountVal = Math.abs(parseFloat(res3.data.remaining_balance) / 100);
+              if (accountVal > 0) successFound = true;
+            }
+          } catch (e) {}
+        }
+
+        // STEP 4: Balance
+        if (!successFound) {
+          try {
+            const res4 = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+              params: { access_token: token, appsecret_proof: proof, fields: 'balance' }
+            });
+            if (res4.data.balance !== undefined) {
+              accountVal = Math.abs(parseFloat(res4.data.balance) / 100);
+              if (accountVal > 0) successFound = true;
+            }
+          } catch (e) {}
+        }
+
+        // STEP 5: Spend Cap
+        if (!successFound) {
+          try {
+            const res5 = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+              params: { access_token: token, appsecret_proof: proof, fields: 'spend_cap,amount_spent' }
+            });
+            const { spend_cap, amount_spent } = res5.data;
+            if (spend_cap && amount_spent) {
+              const cap = parseFloat(spend_cap);
+              const spent = parseFloat(amount_spent);
+              if (cap > 0 && cap > spent) accountVal = (cap - spent) / 100;
+            }
+          } catch (e) {}
         }
         
         totalBalance += accountVal;
 
-        // Sync Campaigns
+        // Sync Campaigns (Separate call)
         const campRes = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}/campaigns`, {
           params: { access_token: token, appsecret_proof: proof, fields: 'id,name,status,objective,daily_budget' }
         });

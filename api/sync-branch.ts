@@ -96,50 +96,83 @@ export default async function handler(req: any, res: any) {
       try {
         const proof = crypto.createHmac('sha256', fbSecret).update(fbToken).digest('hex');
         
-        // SURGICAL REQUEST: We only ask for name and funding details.
-        // Adding 'balance' or 'total_prepaid_balance' here often causes Erro #100 on some accounts.
-        const response = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
-          params: {
-            access_token: fbToken,
-            appsecret_proof: proof,
-            fields: 'name,funding_source_details,currency,account_status,balance,total_prepaid_balance,is_prepaid_account,remaining_balance,spend_cap,amount_spent'
-          },
-          timeout: 15000
-        });
-        
-        const d = response.data;
+        // SURGICAL CHAIN: We try one by one to avoid API Erro #100
         let accountVal = 0;
-        const displayStr = d.funding_source_details?.display_string;
-        
-        console.log(`[SYNC-FALLBACK] Account ${cleanId} data:`, { 
-          display: displayStr, 
-          balance: d.balance, 
-          prepaid: d.total_prepaid_balance 
-        });
+        let successFound = false;
 
-        if (displayStr) {
-          accountVal = parseDisplayValue(displayStr);
-        } else if (d.total_prepaid_balance) {
-          accountVal = Math.abs(parseFloat(d.total_prepaid_balance) / 100);
-        } else if (d.balance !== undefined && parseFloat(d.balance) !== 0) {
-          accountVal = Math.abs(parseFloat(d.balance) / 100);
-        } else if (d.remaining_balance) {
-          accountVal = Math.abs(parseFloat(d.remaining_balance) / 100);
-        } else if (d.spend_cap && d.amount_spent) {
-          // Fallback 4: Spend Cap - Amount Spent (Remaining Budget)
-          const cap = parseFloat(d.spend_cap);
-          const spent = parseFloat(d.amount_spent);
-          if (cap > 0 && cap > spent) {
-            accountVal = (cap - spent) / 100;
+        // STEP 1: Funding Source Details (Best Quality)
+        try {
+          const res1 = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+            params: { access_token: fbToken, appsecret_proof: proof, fields: 'name,funding_source_details,currency,account_status' },
+            timeout: 10000
+          });
+          const d = res1.data;
+          const displayStr = d.funding_source_details?.display_string;
+          if (displayStr) {
+            accountVal = parseDisplayValue(displayStr);
+            if (accountVal > 0) successFound = true;
           }
+        } catch (e) {}
+
+        // STEP 2: Total Prepaid Balance
+        if (!successFound) {
+          try {
+            const res2 = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+              params: { access_token: fbToken, appsecret_proof: proof, fields: 'total_prepaid_balance' }
+            });
+            if (res2.data.total_prepaid_balance) {
+              accountVal = Math.abs(parseFloat(res2.data.total_prepaid_balance) / 100);
+              if (accountVal > 0) successFound = true;
+            }
+          } catch (e) {}
+        }
+
+        // STEP 3: Remaining Balance
+        if (!successFound) {
+          try {
+            const res3 = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+              params: { access_token: fbToken, appsecret_proof: proof, fields: 'remaining_balance' }
+            });
+            if (res3.data.remaining_balance) {
+              accountVal = Math.abs(parseFloat(res3.data.remaining_balance) / 100);
+              if (accountVal > 0) successFound = true;
+            }
+          } catch (e) {}
+        }
+
+        // STEP 4: Balance (Fallback)
+        if (!successFound) {
+          try {
+            const res4 = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+              params: { access_token: fbToken, appsecret_proof: proof, fields: 'balance' }
+            });
+            if (res4.data.balance !== undefined) {
+              accountVal = Math.abs(parseFloat(res4.data.balance) / 100);
+              if (accountVal > 0) successFound = true;
+            }
+          } catch (e) {}
+        }
+
+        // STEP 5: Spend Cap (Last Resort)
+        if (!successFound) {
+          try {
+            const res5 = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
+              params: { access_token: fbToken, appsecret_proof: proof, fields: 'spend_cap,amount_spent' }
+            });
+            const { spend_cap, amount_spent } = res5.data;
+            if (spend_cap && amount_spent) {
+              const cap = parseFloat(spend_cap);
+              const spent = parseFloat(amount_spent);
+              if (cap > 0 && cap > spent) accountVal = (cap - spent) / 100;
+            }
+          } catch (e) {}
         }
 
         totalBalance += accountVal;
         debugInfo.push({
           id: cleanId,
-          name: d.name,
-          raw: d,
-          calculated: accountVal
+          calculated: accountVal,
+          method: successFound ? 'found' : 'fallback-last'
         });
       } catch (accErr: any) {
         console.error(`FB Account Error (${cleanId}):`, accErr.response?.data || accErr.message);
