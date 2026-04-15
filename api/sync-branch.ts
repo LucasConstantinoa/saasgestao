@@ -49,33 +49,46 @@ export default async function handler(req: any, res: any) {
 
     const parseDisplayValue = (str: string | undefined) => {
       if (!str) return 0;
+      
+      // LOG: What did we get from Meta?
+      console.log(`[PARSER] Received string: "${str}"`);
+
       // Remove everything except numbers, comma, dot and minus
+      // We also keep the space once to check for thousand separators vs decimals
       const cleaned = str.replace(/[^\d,.-]/g, '');
       if (!cleaned) return 0;
 
       let numericValue = 0;
-      // Precision handling for "1.234,56" vs "1,234.56"
+      
+      // Format 1: "1.234,56" (European/Brazilian)
       if (cleaned.includes(',') && cleaned.includes('.')) {
         const lastComma = cleaned.lastIndexOf(',');
         const lastDot = cleaned.lastIndexOf('.');
         if (lastComma > lastDot) {
-          // BR Format: 1.234,56
+          // Dot is thousand separator, comma is decimal
           numericValue = parseFloat(cleaned.replace(/\./g, '').replace(',', '.')) || 0;
         } else {
-          // US Format: 1,234.56
+          // Comma is thousand separator, dot is decimal
           numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
         }
-      } else if (cleaned.includes(',')) {
-        // Just comma: "1234,56" or "1,234"
+      } 
+      // Format 2: "1234,56" (Just decimal comma)
+      else if (cleaned.includes(',')) {
         const parts = cleaned.split(',');
+        // If it looks like decimals (2 digits after comma), treat as decimal
         if (parts[parts.length - 1].length === 2) {
           numericValue = parseFloat(cleaned.replace(',', '.')) || 0;
         } else {
+          // Otherwise maybe it's a thousand separator for a whole number
           numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
         }
-      } else {
+      } 
+      // Format 3: "1234.56" or "1234"
+      else {
         numericValue = parseFloat(cleaned) || 0;
       }
+
+      console.log(`[PARSER] Result for "${str}": ${numericValue}`);
       return Math.abs(numericValue);
     };
 

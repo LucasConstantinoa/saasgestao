@@ -14,28 +14,45 @@ const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
 
 const parseDisplayValue = (str: string | undefined): number => {
   if (!str) return 0;
+  
+  // LOG: What did we get from Meta?
+  console.log(`[FRONTEND-PARSER] Received string: "${str}"`);
+
+  // Remove everything except numbers, comma, dot and minus
   const cleaned = str.replace(/[^\d,.-]/g, '');
   if (!cleaned) return 0;
 
   let numericValue = 0;
+  
+  // Format 1: "1.234,56" (European/Brazilian)
   if (cleaned.includes(',') && cleaned.includes('.')) {
     const lastComma = cleaned.lastIndexOf(',');
     const lastDot = cleaned.lastIndexOf('.');
     if (lastComma > lastDot) {
+      // Dot is thousand separator, comma is decimal
       numericValue = parseFloat(cleaned.replace(/\./g, '').replace(',', '.')) || 0;
     } else {
+      // Comma is thousand separator, dot is decimal
       numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
     }
-  } else if (cleaned.includes(',')) {
+  } 
+  // Format 2: "1234,56" (Just decimal comma)
+  else if (cleaned.includes(',')) {
     const parts = cleaned.split(',');
+    // If it looks like decimals (2 digits after comma), treat as decimal
     if (parts[parts.length - 1].length === 2) {
       numericValue = parseFloat(cleaned.replace(',', '.')) || 0;
     } else {
+      // Otherwise maybe it's a thousand separator for a whole number
       numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
     }
-  } else {
+  } 
+  // Format 3: "1234.56" or "1234"
+  else {
     numericValue = parseFloat(cleaned) || 0;
   }
+
+  console.log(`[FRONTEND-PARSER] Result for "${str}": ${numericValue}`);
   return Math.abs(numericValue);
 };
 
@@ -106,14 +123,21 @@ export const syncBranchBalanceDirect = async (branchId: number): Promise<{ succe
       console.log(`[DEBUG ${cleanId}] display_string:`, data.funding_source_details?.display_string);
       
       const displayStr = data.funding_source_details?.display_string;
+      const fundingBal = data.funding_source_details?.balance;
       
+      let accountVal = 0;
       if (displayStr) {
-        const value = parseDisplayValue(displayStr);
-        console.log(`[SYNC ${cleanId}] Parsed: R$ ${value.toFixed(2)} from "${displayStr}"`);
-        totalBalance += value;
+        accountVal = parseDisplayValue(displayStr);
+        console.log(`[SYNC DIRECT ${cleanId}] Derived R$ ${accountVal.toFixed(2)} from display_string: "${displayStr}"`);
+      } else if (fundingBal && parseFloat(fundingBal) !== 0) {
+        // Fallback to balance in cents
+        accountVal = Math.abs(parseFloat(fundingBal) / 100);
+        console.log(`[SYNC DIRECT ${cleanId}] Derived R$ ${accountVal.toFixed(2)} from balance fallback: ${fundingBal}`);
       } else {
-        console.warn(`[NO DISPLAY] ${cleanId}:`, data.funding_source_details);
+        console.warn(`[SYNC DIRECT ${cleanId}] Could not find balance. Details:`, data.funding_source_details);
       }
+      
+      totalBalance += accountVal;
     }
 
     // Update branch balance

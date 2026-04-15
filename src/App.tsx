@@ -2515,7 +2515,35 @@ export default function App() {
                 <div className="relative group">
                   <select
                     value={newFacebookAdAccountId}
-                    onChange={(e) => setNewFacebookAdAccountId(e.target.value)}
+                    onChange={(e) => {
+                      const selectedId = e.target.value;
+                      setNewFacebookAdAccountId(selectedId);
+                      
+                      // Auto-update balance field if account has balance info
+                      const selectedAcc = fetchedAdAccounts.find(acc => acc.id === selectedId);
+                      if (selectedAcc?.balance) {
+                        // Use a robust parser for the display string
+                        const str = selectedAcc.balance;
+                        const cleaned = str.replace(/[^\d,.-]/g, '');
+                        if (cleaned) {
+                          let numericValue = 0;
+                          if (cleaned.includes(',') && cleaned.includes('.')) {
+                            const lastComma = cleaned.lastIndexOf(',');
+                            const lastDot = cleaned.lastIndexOf('.');
+                            if (lastComma > lastDot) numericValue = parseFloat(cleaned.replace(/\./g, '').replace(',', '.')) || 0;
+                            else numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
+                          } else if (cleaned.includes(',')) {
+                            const parts = cleaned.split(',');
+                            if (parts[parts.length - 1].length === 2) numericValue = parseFloat(cleaned.replace(',', '.')) || 0;
+                            else numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
+                          } else numericValue = parseFloat(cleaned) || 0;
+                          
+                          if (numericValue > 0) {
+                            setNewValue(numericValue.toString());
+                          }
+                        }
+                      }
+                    }}
                     className={cn(
                       "w-full rounded-xl px-4 py-3 focus:outline-none focus:border-primary/50 transition-all appearance-none",
                       "bg-surface border border-border text-foreground"
