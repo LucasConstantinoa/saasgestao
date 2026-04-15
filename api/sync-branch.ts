@@ -125,7 +125,6 @@ export default async function handler(req: any, res: any) {
           id: cleanId,
           name: d.name,
           display: displayStr,
-          funding: fundingBal,
           calculated: accountVal
         });
       } catch (accErr: any) {
