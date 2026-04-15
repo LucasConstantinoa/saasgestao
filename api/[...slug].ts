@@ -82,7 +82,7 @@ async function syncBranchBalance(supabase: any, branch: any) {
         const d = response.data;
         const displayStr = d.funding_source_details?.display_string;
         if (displayStr) totalBalance += parseDisplayValue(displayStr);
-        else if (d.funding_source_details?.balance) totalBalance += Math.abs(parseFloat(d.funding_source_details.balance) / 100);
+        else console.warn(`[SYNC SLUG ONLY-DISPLAY] No display_string for ${cleanId}`, d.funding_source_details);
 
         // Sync Campaigns
         const campRes = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}/campaigns`, {

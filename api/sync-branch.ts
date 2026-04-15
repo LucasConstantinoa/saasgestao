@@ -110,17 +110,14 @@ export default async function handler(req: any, res: any) {
         const d = response.data;
         let accountVal = 0;
         const displayStr = d.funding_source_details?.display_string;
-        const fundingBal = d.funding_source_details?.balance;
         
         // DEBUG: Logging the exact string we found
-        console.log(`[SYNC] Account ${cleanId} display_string:`, displayStr);
+        console.log(`[SYNC ONLY-DISPLAY] Account ${cleanId} display_string:`, displayStr);
 
-        // LOGIC PRIORITY: Always trust display_string first
         if (displayStr) {
           accountVal = parseDisplayValue(displayStr);
-        } else if (fundingBal && parseFloat(fundingBal) !== 0) {
-          // Fallback to numeric balance in cents if display string is missing
-          accountVal = Math.abs(parseFloat(fundingBal) / 100);
+        } else {
+          console.warn(`[SYNC ONLY-DISPLAY] display_string MISSING for ${cleanId}. Details:`, d.funding_source_details);
         }
 
         totalBalance += accountVal;

@@ -123,18 +123,13 @@ export const syncBranchBalanceDirect = async (branchId: number): Promise<{ succe
       console.log(`[DEBUG ${cleanId}] display_string:`, data.funding_source_details?.display_string);
       
       const displayStr = data.funding_source_details?.display_string;
-      const fundingBal = data.funding_source_details?.balance;
       
       let accountVal = 0;
       if (displayStr) {
         accountVal = parseDisplayValue(displayStr);
-        console.log(`[SYNC DIRECT ${cleanId}] Derived R$ ${accountVal.toFixed(2)} from display_string: "${displayStr}"`);
-      } else if (fundingBal && parseFloat(fundingBal) !== 0) {
-        // Fallback to balance in cents
-        accountVal = Math.abs(parseFloat(fundingBal) / 100);
-        console.log(`[SYNC DIRECT ${cleanId}] Derived R$ ${accountVal.toFixed(2)} from balance fallback: ${fundingBal}`);
+        console.log(`[SYNC DIRECT ONLY-DISPLAY ${cleanId}] Derived R$ ${accountVal.toFixed(2)} from display_string: "${displayStr}"`);
       } else {
-        console.warn(`[SYNC DIRECT ${cleanId}] Could not find balance. Details:`, data.funding_source_details);
+        console.warn(`[SYNC DIRECT ONLY-DISPLAY ${cleanId}] display_string MISSING. Details:`, data.funding_source_details);
       }
       
       totalBalance += accountVal;
