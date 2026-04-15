@@ -1,0 +1,8 @@
+export interface UserBranchPermission {
+  id: number;
+  user_id: string;
+  branch_id: number;
+  permission_level: 'none' | 'view' | 'reports_only' | 'add_sale' | 'edit';
+  granular_permissions: Record<string, boolean>;
+  created_at: string;
+}

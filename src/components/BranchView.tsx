@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { KPI, Card, Badge } from '@/components/UI';
 import { TrendingUp, DollarSign, Users, Plus, Edit2, Trash2, Pause, Play, ChevronDown, Settings as SettingsIcon, AlertCircle } from 'lucide-react';
+import { usePermissions } from '@/hooks/usePermissions';
 import { formatCurrency, formatPercent, cn, calculateDailySpend } from '@/lib/utils';
 import { Branch, Campaign, Sale, Company } from '@/types';
 import { logAuditEvent } from '@/lib/audit';
@@ -25,8 +26,11 @@ interface Props {
 export const BranchView: React.FC<Props> = ({ 
   selectedBranch: initialBranch, selectedCompany, branchCampaigns, sales, salesSortBy, salesSortOrder, handleSalesSort,
   handleToggleCampaignStatus, handleDeleteCampaign, setIsNewCampaignModalOpen, setIsRegisterSaleModalOpen,
-  setIsEditBranchModalOpen, setSelectedCampaignForModal
+  setIsEditBranchModalOpen, setSelectedCampaignForModal, user
 }) => {
+  const { hasAccess } = usePermissions(user?.id || '');
+  const canEdit = hasAccess(selectedBranch.id, 'edit');
+  const canAddSales = hasAccess(selectedBranch.id, 'add_sale');
   const [selectedBranch, setSelectedBranch] = React.useState(initialBranch);
 
   useEffect(() => {
@@ -82,11 +86,12 @@ export const BranchView: React.FC<Props> = ({
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold tracking-tight text-foreground">{selectedBranch.name}</h2>
         <button 
-          onClick={() => setIsEditBranchModalOpen(true)}
-          className="btn-secondary flex items-center gap-2 text-xs"
+          onClick={() => canEdit && setIsEditBranchModalOpen(true)}
+          disabled={!canEdit}
+          className={cn("btn-secondary flex items-center gap-2 text-xs", !canEdit && "opacity-50 cursor-not-allowed")}
         >
           <SettingsIcon size={16} />
-          <span>Editar Filial</span>
+          <span>{canEdit ? 'Editar Filial' : 'Sem permissão para editar'}</span>
         </button>
       </div>
 
@@ -101,9 +106,9 @@ export const BranchView: React.FC<Props> = ({
         <div className="lg:col-span-2 space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-bold tracking-tight">Campanhas Ativas</h3>
-            <button onClick={() => setIsNewCampaignModalOpen(true)} className="btn-primary flex items-center gap-2 text-xs">
+            <button onClick={() => canEdit && setIsNewCampaignModalOpen(true)} className={cn("btn-primary flex items-center gap-2 text-xs", !canEdit && "opacity-50 cursor-not-allowed")} disabled={!canEdit}>
               <Plus size={16} />
-              <span>Nova Campanha</span>
+              <span>{canEdit ? 'Nova Campanha' : 'Sem permissão'}</span>
             </button>
           </div>
           
@@ -151,17 +156,19 @@ export const BranchView: React.FC<Props> = ({
                       <td className="px-6 py-4 text-right">
                         <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-all">
                           <button 
-                            onClick={(e) => { e.stopPropagation(); handleToggleCampaignStatus(c); }}
+                            onClick={(e) => { e.stopPropagation(); if (canEdit) handleToggleCampaignStatus(c); }}
+                            disabled={!canEdit}
                             className={cn(
                               "p-1.5 rounded-lg transition-all",
-                              c.status === 'paused' ? "hover:bg-emerald-500/10 text-emerald-500" : "hover:bg-amber-500/10 text-amber-500"
+                              c.status === 'paused' ? "hover:bg-emerald-500/10 text-emerald-500" : "hover:bg-amber-500/10 text-amber-500",
+                              !canEdit && "opacity-50 cursor-not-allowed"
                             )}
-                            title={c.status === 'paused' ? "Ativar" : "Pausar"}
+                            title={!canEdit ? "Sem permissão para editar" : c.status === 'paused' ? "Ativar" : "Pausar"}
                           >
                             {c.status === 'paused' ? <Play size={14} /> : <Pause size={14} />}
                           </button>
-                          <button onClick={(e) => e.stopPropagation()} className="p-1.5 rounded-lg hover:bg-primary/10 text-primary transition-all"><Edit2 size={14} /></button>
-                          <button onClick={(e) => { e.stopPropagation(); handleDeleteCampaign(c); }} className="p-1.5 rounded-lg hover:bg-rose-500/10 text-rose-400 transition-all"><Trash2 size={14} /></button>
+                          <button onClick={(e) => { e.stopPropagation(); if (canEdit) setSelectedCampaignForModal(c); }} className={cn("p-1.5 rounded-lg hover:bg-primary/10 text-primary transition-all", !canEdit && "opacity-50 cursor-not-allowed")} disabled={!canEdit}><Edit2 size={14} /></button>
+                          <button onClick={(e) => { e.stopPropagation(); if (canEdit) handleDeleteCampaign(c); }} className={cn("p-1.5 rounded-lg hover:bg-rose-500/10 text-rose-400 transition-all", !canEdit && "opacity-50 cursor-not-allowed")} disabled={!canEdit}><Trash2 size={14} /></button>
                         </div>
                       </td>
                     </tr>
@@ -173,9 +180,9 @@ export const BranchView: React.FC<Props> = ({
 
           <div className="flex items-center justify-between pt-4">
             <h3 className="text-lg font-bold tracking-tight">Vendas Recentes</h3>
-            <button onClick={() => setIsRegisterSaleModalOpen(true)} className="btn-secondary flex items-center gap-2 text-xs">
+            <button onClick={() => canAddSales && setIsRegisterSaleModalOpen(true)} className={cn("btn-secondary flex items-center gap-2 text-xs", !canAddSales && "opacity-50 cursor-not-allowed")} disabled={!canAddSales}>
               <Plus size={16} />
-              <span>{selectedCompany?.type === 'association' ? 'Registrar Adesão' : 'Registrar Venda'}</span>
+              <span>{canAddSales ? (selectedCompany?.type === 'association' ? 'Registrar Adesão' : 'Registrar Venda') : 'Sem permissão para registrar'}</span>
             </button>
           </div>
 
