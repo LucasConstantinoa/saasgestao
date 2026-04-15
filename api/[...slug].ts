@@ -191,6 +191,43 @@ app.get("/api/facebook/ad-accounts", async (req, res) => {
   }
 });
 
+app.get("/api/facebook/insights", async (req, res) => {
+  const { accountIds, token: reqToken, since, until, fields, level } = req.query;
+  
+  let token = (reqToken as string);
+  if (!token || token === 'test' || token === 'undefined') {
+    const { data: s } = await supabaseAdmin.from('settings').select('value').eq('key', 'facebook_access_token').single();
+    token = s?.value;
+  }
+
+  if (!token) return res.status(400).json({ error: "Token not found" });
+  if (!accountIds) return res.status(400).json({ error: "Missing accountIds" });
+
+  const ids = (accountIds as string).split(',');
+  const proof = getAppSecretProof(token);
+  const allData: any[] = [];
+
+  try {
+    for (const id of ids) {
+      const cleanId = id.trim().replace('act_', '');
+      const response = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}/insights`, {
+        params: {
+          access_token: token,
+          appsecret_proof: proof,
+          time_range: JSON.stringify({ since, until }),
+          fields: fields || 'campaign_name,reach,impressions,clicks,spend,actions',
+          level: level || 'campaign'
+        }
+      });
+      if (response.data.data) allData.push(...response.data.data);
+    }
+    res.json({ data: allData });
+  } catch (err: any) {
+    console.error("Insights Fetch Error:", err.response?.data || err.message);
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+  }
+});
+
 app.post("/api/facebook/create-campaign", async (req, res) => {
   const { branchId, name, objective, dailyBudget } = req.body;
   if (!branchId || !name || !objective) return res.status(400).json({ error: 'Missing params' });

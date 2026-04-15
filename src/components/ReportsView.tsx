@@ -13,25 +13,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import axios from 'axios';
 
-// Helper to generate appsecret_proof for the Graph API security requirement
-async function generateAppSecretProof(accessToken: string, appSecret: string) {
-  const enc = new TextEncoder();
-  const key = await window.crypto.subtle.importKey(
-    "raw",
-    enc.encode(appSecret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  const signature = await window.crypto.subtle.sign(
-    "HMAC",
-    key,
-    enc.encode(accessToken)
-  );
-  return Array.from(new Uint8Array(signature))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
+// Client-side ad insights helper removed – now using server proxy to avoid CORS and protect credentials
 
 interface ReportsViewProps {
   branches: Branch[];
@@ -218,20 +200,25 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
 
   const fetchBranchInsights = async (branch: Branch, start: string, end: string) => {
     const token = branch.facebook_access_token || settings.facebook_access_token;
-    const accountIdString = branch.facebook_ad_account_id;
-    const appSecret = import.meta.env.VITE_FACEBOOK_APP_SECRET;
+    const accountIds = branch.facebook_ad_account_id;
     
-    if (!token || !accountIdString || !appSecret) return;
+    if (!accountIds) return;
 
     setIsFetchingFacebook(true);
     try {
-      const appSecretProof = await generateAppSecretProof(token, appSecret);
+      // Use the server proxy to avoid CORS and stay secure
+      const response = await axios.get(`/api/facebook/insights`, {
+        params: {
+          accountIds,
+          token: (token && token.length > 10) ? token : 'test',
+          since: start,
+          until: end,
+          fields: 'campaign_name,reach,impressions,clicks,spend,actions',
+          level: 'campaign'
+        }
+      });
       
-      const accountIds = accountIdString.split(',').map(id => {
-        const trimmed = id.trim().replace('act_', '');
-        return trimmed.split('|')[0];
-      }).filter(Boolean);
-      
+      const data = response.data.data;
       let totalReach = 0;
       let totalImpressions = 0;
       let totalClicks = 0;
@@ -239,54 +226,41 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
       let totalLeads = 0;
       const allCampaigns: any[] = [];
 
-      for (const accountId of accountIds) {
-        try {
-            const insightsRes = await axios.get(`https://graph.facebook.com/v22.0/act_${accountId}/insights`, {
-              params: {
-                access_token: token,
-                appsecret_proof: appSecretProof,
-                time_range: JSON.stringify({ since: start, until: end }),
-                fields: 'campaign_name,reach,impressions,clicks,spend,actions',
-                level: 'campaign'
-              }
-            });
+      if (data && data.length > 0) {
+        data.forEach((row: any) => {
+          const reach = parseInt(row.reach || '0');
+          const impressions = parseInt(row.impressions || '0');
+          const clicks = parseInt(row.clicks || '0');
+          const spend = parseFloat(row.spend || '0');
+          let leads = 0;
           
-          const data = insightsRes.data.data;
-          if (data && data.length > 0) {
-            data.forEach((row: any) => {
-              const reach = parseInt(row.reach || '0');
-              const impressions = parseInt(row.impressions || '0');
-              const clicks = parseInt(row.clicks || '0');
-              const spend = parseFloat(row.spend || '0');
-              let leads = 0;
-              
-              if (row.actions) {
-                const leadsAction = row.actions.find((a: any) => a.action_type === 'lead' || a.action_type === 'onsite_conversion.messaging_conversation_started_7d');
-                if (leadsAction) {
-                  leads = parseInt(leadsAction.value || '0');
-                }
-              }
-
-              totalReach += reach;
-              totalImpressions += impressions;
-              totalClicks += clicks;
-              totalSpend += spend;
-              totalLeads += leads;
-
-              allCampaigns.push({
-                id: row.campaign_id,
-                name: row.campaign_name,
-                reach,
-                impressions,
-                clicks,
-                spend,
-                leads
-              });
-            });
+          if (row.actions) {
+            const leadsAction = row.actions.find((a: any) => 
+               a.action_type === 'lead' || 
+               a.action_type === 'onsite_conversion.messaging_conversation_started_7d' ||
+               a.action_type === 'link_click' // fallback
+            );
+            if (leadsAction) {
+              leads = parseInt(leadsAction.value || '0');
+            }
           }
-        } catch (err) {
-          console.error(`Error fetching insights for account ${accountId}:`, err);
-        }
+
+          totalReach += reach;
+          totalImpressions += impressions;
+          totalClicks += clicks;
+          totalSpend += spend;
+          totalLeads += leads;
+
+          allCampaigns.push({
+            id: row.campaign_id,
+            name: row.campaign_name,
+            reach,
+            impressions,
+            clicks,
+            spend,
+            leads
+          });
+        });
       }
 
       setFacebookCampaigns(allCampaigns);
@@ -304,7 +278,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
       
       addToast('success', 'Dados Sincronizados', 'Informações atualizadas do Facebook.');
     } catch (err) {
-      console.error("Error in fetchBranchInsights:", err);
+      console.error("Error in fetchBranchInsights Proxy:", err);
       addToast('error', 'Erro', 'Falha ao buscar dados do Facebook.');
     } finally {
       setIsFetchingFacebook(false);
@@ -393,52 +367,36 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
         const branch = branches.find(b => b.id === branchId);
         if (!branch) continue;
 
+        const response = await axios.get(`/api/facebook/insights`, {
+          params: {
+            accountIds: branch.facebook_ad_account_id,
+            token: (branch.facebook_access_token && branch.facebook_access_token.length > 10) ? branch.facebook_access_token : 'test',
+            since: globalStart,
+            until: globalEnd
+          }
+        });
+
+        const data = response.data.data;
         let totalReach = 0;
         let totalImpressions = 0;
         let totalClicks = 0;
         let totalSpend = 0;
         let totalLeads = 0;
 
-        if (branch.facebook_access_token && branch.facebook_ad_account_id) {
-          const appSecret = import.meta.env.VITE_FACEBOOK_APP_SECRET;
-          if (!appSecret) continue;
-          
-          const appSecretProof = await generateAppSecretProof(branch.facebook_access_token, appSecret);
-
-          const accountIds = branch.facebook_ad_account_id.split(',').map(id => {
-            const trimmed = id.trim().replace('act_', '');
-            return trimmed.split('|')[0];
-          }).filter(Boolean);
-          for (const accountId of accountIds) {
-            try {
-              const insightsRes = await axios.get(`https://graph.facebook.com/v22.0/act_${accountId}/insights`, {
-                params: {
-                  access_token: branch.facebook_access_token,
-                  appsecret_proof: appSecretProof,
-                  time_range: JSON.stringify({ since: globalStart, until: globalEnd }),
-                  fields: 'reach,impressions,clicks,spend,actions'
-                }
-              });
-              
-              const data = insightsRes.data.data;
-              if (data && data.length > 0) {
-                const row = data[0];
-                totalReach += parseInt(row.reach || '0');
-                totalImpressions += parseInt(row.impressions || '0');
-                totalClicks += parseInt(row.clicks || '0');
-                totalSpend += parseFloat(row.spend || '0');
-                
-                if (row.actions) {
-                  const leadsAction = row.actions.find((a: any) => a.action_type === 'lead');
-                  if (leadsAction) {
-                    totalLeads += parseInt(leadsAction.value || '0');
-                  }
-                }
+        if (data && data.length > 0) {
+          data.forEach((row: any) => {
+            totalReach += parseInt(row.reach || '0');
+            totalImpressions += parseInt(row.impressions || '0');
+            totalClicks += parseInt(row.clicks || '0');
+            totalSpend += parseFloat(row.spend || '0');
+            
+            if (row.actions) {
+              const leadsAction = row.actions.find((a: any) => a.action_type === 'lead');
+              if (leadsAction) {
+                totalLeads += parseInt(leadsAction.value || '0');
               }
-            } catch (err) {
-              console.error(`Error fetching insights for branch ${branch.name}, account ${accountId}:`, err);
             }
-          }
+          });
         }
 
         results.push({
