@@ -127,7 +127,9 @@ const MobileBottomNav = ({ location, isAdmin, isReportsOnly }: { location: any, 
     { icon: Building2, label: 'Empresas', to: '/companies', hidden: isReportsOnly },
     { icon: Eye, label: 'Águia', to: '/eagle', hidden: isReportsOnly },
     { icon: Calendar, label: 'Relatórios', to: '/reports' },
+    { icon: Facebook, label: 'Meta', to: '/facebook', requiredAdmin: true },
     { icon: History, label: 'Histórico', to: '/history', hidden: isReportsOnly },
+    { icon: User, label: 'Users', to: '/users', requiredAdmin: true },
     { icon: Settings, label: 'Ajustes', to: '/settings', requiredAdmin: true },
   ];
 

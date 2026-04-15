@@ -85,6 +85,9 @@ export const UsersView = () => {
     // Optimistic UI update
     setPermissions(prev => {
       const existing = prev.find(p => p.user_id === user_id && p.branch_id === branch_id);
+      if (permission_level === 'none') {
+        return prev.filter(p => !(p.user_id === user_id && p.branch_id === branch_id));
+      }
       if (existing) {
         return prev.map(p => p.user_id === user_id && p.branch_id === branch_id 
           ? { ...p, permission_level, granular_permissions: granular } 
@@ -100,7 +103,7 @@ export const UsersView = () => {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
       body: JSON.stringify({ user_id, branch_id, permission_level, granular_permissions: granular })
     });
-    fetchData();
+    await fetchData(); // Ensure refresh completes
   };
 
   const handleDeleteUser = async (userId: string) => {
