@@ -25,7 +25,8 @@ const parseDisplayValue = (str: string | undefined) => {
   console.log(`[PARSER-SLUG] Received string: "${str}"`);
 
   // Remove everything except numbers, comma, dot and minus
-  const cleaned = str.replace(/[^\d,.-]/g, '');
+  // Use a more aggressive regex to handle cases like "R$ R$ 388,55"
+  const cleaned = str.replace(/[^\d,.-]/g, '').trim();
   if (!cleaned) return 0;
 
   let numericValue = 0;
@@ -35,25 +36,20 @@ const parseDisplayValue = (str: string | undefined) => {
     const lastComma = cleaned.lastIndexOf(',');
     const lastDot = cleaned.lastIndexOf('.');
     if (lastComma > lastDot) {
-      // Dot is thousand separator, comma is decimal
       numericValue = parseFloat(cleaned.replace(/\./g, '').replace(',', '.')) || 0;
     } else {
-      // Comma is thousand separator, dot is decimal
       numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
     }
   } 
   // Format 2: "1234,56" (Just decimal comma)
   else if (cleaned.includes(',')) {
     const parts = cleaned.split(',');
-    // If it looks like decimals (2 digits after comma), treat as decimal
-    if (parts[parts.length - 1].length === 2) {
+    if (parts[parts.length - 1].length <= 2) {
       numericValue = parseFloat(cleaned.replace(',', '.')) || 0;
     } else {
-      // Otherwise maybe it's a thousand separator for a whole number
       numericValue = parseFloat(cleaned.replace(/,/g, '')) || 0;
     }
   } 
-  // Format 3: "1234.56" or "1234"
   else {
     numericValue = parseFloat(cleaned) || 0;
   }
@@ -77,7 +73,7 @@ async function syncBranchBalance(supabase: any, branch: any) {
       try {
         // Sync Balance
         const response = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
-          params: { access_token: token, appsecret_proof: proof, fields: 'name,funding_source_details,currency,balance,total_prepaid_balance' }
+          params: { access_token: token, appsecret_proof: proof, fields: 'name,funding_source_details,currency,balance,total_prepaid_balance,spend_cap,amount_spent,remaining_balance' }
         });
         const d = response.data;
         let accountVal = 0;
@@ -87,8 +83,16 @@ async function syncBranchBalance(supabase: any, branch: any) {
           accountVal = parseDisplayValue(displayStr);
         } else if (d.total_prepaid_balance) {
           accountVal = Math.abs(parseFloat(d.total_prepaid_balance) / 100);
-        } else if (d.balance !== undefined) {
+        } else if (d.balance !== undefined && parseFloat(d.balance) !== 0) {
           accountVal = Math.abs(parseFloat(d.balance) / 100);
+        } else if (d.remaining_balance) {
+          accountVal = Math.abs(parseFloat(d.remaining_balance) / 100);
+        } else if (d.spend_cap && d.amount_spent) {
+          const cap = parseFloat(d.spend_cap);
+          const spent = parseFloat(d.amount_spent);
+          if (cap > 0 && cap > spent) {
+            accountVal = (cap - spent) / 100;
+          }
         }
         
         totalBalance += accountVal;

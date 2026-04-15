@@ -102,7 +102,7 @@ export default async function handler(req: any, res: any) {
           params: {
             access_token: fbToken,
             appsecret_proof: proof,
-            fields: 'name,funding_source_details,currency,account_status,balance,total_prepaid_balance,is_prepaid_account,remaining_balance'
+            fields: 'name,funding_source_details,currency,account_status,balance,total_prepaid_balance,is_prepaid_account,remaining_balance,spend_cap,amount_spent'
           },
           timeout: 15000
         });
@@ -121,17 +121,24 @@ export default async function handler(req: any, res: any) {
           accountVal = parseDisplayValue(displayStr);
         } else if (d.total_prepaid_balance) {
           accountVal = Math.abs(parseFloat(d.total_prepaid_balance) / 100);
-        } else if (d.balance !== undefined) {
+        } else if (d.balance !== undefined && parseFloat(d.balance) !== 0) {
           accountVal = Math.abs(parseFloat(d.balance) / 100);
         } else if (d.remaining_balance) {
           accountVal = Math.abs(parseFloat(d.remaining_balance) / 100);
+        } else if (d.spend_cap && d.amount_spent) {
+          // Fallback 4: Spend Cap - Amount Spent (Remaining Budget)
+          const cap = parseFloat(d.spend_cap);
+          const spent = parseFloat(d.amount_spent);
+          if (cap > 0 && cap > spent) {
+            accountVal = (cap - spent) / 100;
+          }
         }
 
         totalBalance += accountVal;
         debugInfo.push({
           id: cleanId,
           name: d.name,
-          raw: d, // Sending raw data back for debugging if needed
+          raw: d,
           calculated: accountVal
         });
       } catch (accErr: any) {
