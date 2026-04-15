@@ -40,6 +40,7 @@ const Sidebar = ({ isAdmin, location, isReportsOnly }: { isAdmin: boolean, locat
   const navItems = [
     { icon: Building2, label: 'Empresas', to: '/companies', hidden: isReportsOnly },
     { icon: Calendar, label: 'Relatórios', to: '/reports' },
+    { icon: Facebook, label: 'Meta (Clientes)', to: '/facebook', requiredAdmin: true },
     { icon: Settings, label: 'Configurações', to: '/settings', hidden: isReportsOnly },
     { icon: Eye, label: 'Visão de Águia', to: '/eagle', hidden: isReportsOnly },
     { icon: History, label: 'Histórico', to: '/history', hidden: isReportsOnly },
