@@ -77,12 +77,21 @@ async function syncBranchBalance(supabase: any, branch: any) {
       try {
         // Sync Balance
         const response = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}`, {
-          params: { access_token: token, appsecret_proof: proof, fields: 'name,funding_source_details,currency' }
+          params: { access_token: token, appsecret_proof: proof, fields: 'name,funding_source_details,currency,balance,total_prepaid_balance' }
         });
         const d = response.data;
+        let accountVal = 0;
         const displayStr = d.funding_source_details?.display_string;
-        if (displayStr) totalBalance += parseDisplayValue(displayStr);
-        else console.warn(`[SYNC SLUG ONLY-DISPLAY] No display_string for ${cleanId}`, d.funding_source_details);
+        
+        if (displayStr) {
+          accountVal = parseDisplayValue(displayStr);
+        } else if (d.total_prepaid_balance) {
+          accountVal = Math.abs(parseFloat(d.total_prepaid_balance) / 100);
+        } else if (d.balance !== undefined) {
+          accountVal = Math.abs(parseFloat(d.balance) / 100);
+        }
+        
+        totalBalance += accountVal;
 
         // Sync Campaigns
         const campRes = await axios.get(`https://graph.facebook.com/v22.0/act_${cleanId}/campaigns`, {

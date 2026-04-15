@@ -102,7 +102,7 @@ export default async function handler(req: any, res: any) {
           params: {
             access_token: fbToken,
             appsecret_proof: proof,
-            fields: 'name,funding_source_details,currency,account_status'
+            fields: 'name,funding_source_details,currency,account_status,balance,total_prepaid_balance'
           },
           timeout: 15000
         });
@@ -111,13 +111,20 @@ export default async function handler(req: any, res: any) {
         let accountVal = 0;
         const displayStr = d.funding_source_details?.display_string;
         
-        // DEBUG: Logging the exact string we found
-        console.log(`[SYNC ONLY-DISPLAY] Account ${cleanId} display_string:`, displayStr);
+        console.log(`[SYNC-FALLBACK] Account ${cleanId} data:`, { 
+          display: displayStr, 
+          balance: d.balance, 
+          prepaid: d.total_prepaid_balance 
+        });
 
         if (displayStr) {
           accountVal = parseDisplayValue(displayStr);
-        } else {
-          console.warn(`[SYNC ONLY-DISPLAY] display_string MISSING for ${cleanId}. Details:`, d.funding_source_details);
+        } else if (d.total_prepaid_balance) {
+          // Fallback 1: Total Prepaid Balance
+          accountVal = Math.abs(parseFloat(d.total_prepaid_balance) / 100);
+        } else if (d.balance !== undefined) {
+          // Fallback 2: Regular balance (usually prepaid balance is negative "balance" in cents or similar)
+          accountVal = Math.abs(parseFloat(d.balance) / 100);
         }
 
         totalBalance += accountVal;
