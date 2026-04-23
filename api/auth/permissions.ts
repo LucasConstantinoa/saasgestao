@@ -44,7 +44,3 @@ export default async function handler(req: any, res: any) {
     return res.status(500).json({ error: err.message });
   }
 }
-</xai:function_call />
-
-<xai:function_call name="read_file">
-<parameter name="path">src/components/RegisterSaleModal.tsx

@@ -122,164 +122,40 @@ interface LayoutProps {
   branches?: any[];
 }
 
-const MobileBottomNav = ({ location, isAdmin, isReportsOnly, onAdminMenuToggle }: { 
-  location: any, 
-  isAdmin: boolean, 
-  isReportsOnly?: boolean,
-  onAdminMenuToggle: () => void
-}) => {
-  // 5 core tabs max for mobile - prioritize most used
-  const coreNavItems = [
+const MobileBottomNav = ({ location, isAdmin, isReportsOnly }: { location: any, isAdmin: boolean, isReportsOnly?: boolean }) => {
+  const navItems = [
     { icon: Building2, label: 'Empresas', to: '/companies', hidden: isReportsOnly },
-    { icon: Calendar, label: 'Relatórios', to: '/reports' },
     { icon: Eye, label: 'Águia', to: '/eagle', hidden: isReportsOnly },
-  ];
-
-  const adminNavItems = isAdmin ? [
-    { icon: Facebook, label: 'Meta', to: '/facebook' },
-    { icon: User, label: 'Users', to: '/users' },
-    { icon: Settings, label: 'Config', to: '/settings' },
-    { icon: History, label: 'Histórico', to: '/history' },
-    { icon: LayoutDashboard, label: 'Sistema', to: '/configuration' },
-  ] : [];
-
-  return (
-    <>
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-[var(--surface)]/95 backdrop-blur-2xl border-t border-border/40 z-[60] pb-[max(env(safe-area-inset-bottom),8px)] shadow-2xl">
-        <div className="flex items-center justify-evenly px-1.5 h-14 min-h-[56px] w-full gap-1">
-          {coreNavItems.map((item) => {
-            if (item.hidden) return null;
-            const isActive = location.pathname.startsWith(item.to);
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                className={cn(
-                  "flex flex-col items-center justify-center flex-1 h-full relative p-1.5 rounded-lg transition-all duration-200 min-w-0",
-                  isActive 
-                    ? "bg-primary/20 text-primary shadow-lg scale-[1.05]" 
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent/50 active:scale-[0.95]"
-                )}
-                title={item.label}
-              >
-                <Icon size={16} />
-              </Link>
-            );
-          })}
-          
-          {/* Admin Menu Button - 5th slot */}
-          <button
-            onClick={onAdminMenuToggle}
-            className={cn(
-              "flex flex-col items-center justify-center flex-1 h-full p-1.5 rounded-lg transition-all duration-200 relative min-w-0",
-              adminNavItems.length > 0 
-                ? "bg-accent/50 text-foreground shadow-md scale-[1.02] hover:scale-[1.05] active:scale-[0.95]" 
-                : "text-muted-foreground/50"
-            )}
-            title={adminNavItems.length > 0 ? "Menu Admin" : "Sem acesso admin"}
-          >
-            <Settings size={16} />
-            {adminNavItems.length > 0 && (
-              <span className="absolute -top-1 -right-1 w-3 h-3 bg-primary rounded-full border-2 border-surface animate-pulse" />
-            )}
-          </button>
-        </div>
-      </div>
-    </>
-  );
-};
-
-const MobileAdminDrawer = ({ 
-  isOpen, 
-  onClose, 
-  location, 
-  isAdmin, 
-  isReportsOnly 
-}: { 
-  isOpen: boolean;
-  onClose: () => void;
-  location: any;
-  isAdmin: boolean;
-  isReportsOnly?: boolean;
-}) => {
-  const adminNavItems = [
-    { icon: Facebook, label: 'Meta (Clientes)', to: '/facebook' },
-    { icon: User, label: 'Usuários', to: '/users' },
-    { icon: Settings, label: 'Configurações', to: '/settings', hidden: isReportsOnly },
+    { icon: Calendar, label: 'Relatórios', to: '/reports' },
+    { icon: Facebook, label: 'Meta', to: '/facebook', requiredAdmin: true },
     { icon: History, label: 'Histórico', to: '/history', hidden: isReportsOnly },
-    { icon: LayoutDashboard, label: 'Sistema', to: '/configuration' },
+    { icon: User, label: 'Users', to: '/users', requiredAdmin: true },
+    { icon: Settings, label: 'Ajustes', to: '/settings', requiredAdmin: true },
   ];
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <>
-          {/* Backdrop */}
-          <motion.div 
-            className="lg:hidden fixed inset-0 bg-black/30 backdrop-blur-sm z-[70]"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onClose}
-          />
-          
-          {/* Drawer */}
-          <motion.div 
-            className="lg:hidden fixed bottom-0 left-0 right-0 bg-[var(--surface)] border-t border-border/50 shadow-2xl z-[80] rounded-t-3xl max-h-[70vh] overflow-y-auto"
-            initial={{ y: '100%' }}
-            animate={{ y: 0 }}
-            exit={{ y: '100%' }}
-            transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-          >
-            <div className="p-4 pt-6 pb-2 border-b border-border/50">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-black text-lg text-foreground tracking-tight">Menu Admin</h3>
-                <button 
-                  onClick={onClose}
-                  className="p-2 rounded-xl hover:bg-accent/50 transition-all"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-            </div>
-            
-            <div className="space-y-1 px-4 py-3">
-              {adminNavItems.map((item) => {
-                if (item.hidden) return null;
-                const isActive = location.pathname.startsWith(item.to);
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={item.to}
-                    onClick={() => {
-                      onClose();
-                      // Navigate after close animation
-                      setTimeout(() => window.location.href = item.to, 200);
-                    }}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200 text-left group",
-                      isActive 
-                        ? "bg-primary/10 text-primary font-bold shadow-lg" 
-                        : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                    )}
-                  >
-                    <Icon size={20} className={cn(
-                      "shrink-0 flex-shrink-0",
-                      isActive ? "text-primary" : "group-hover:text-foreground"
-                    )} />
-                    <span className="font-semibold text-sm">{item.label}</span>
-                    {isActive && (
-                      <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+    <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-[var(--surface)]/90 backdrop-blur-2xl border-t border-border/30 z-50 pb-[max(env(safe-area-inset-bottom),2px)]">
+      <div className="flex items-center justify-evenly px-2 h-12 w-full">
+        {navItems.map((item) => {
+          if (item.hidden) return null;
+          if (item.requiredAdmin && !isAdmin) return null;
+          const isActive = location.pathname.startsWith(item.to);
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.to}
+              to={item.to}
+              className={cn(
+                "flex flex-col items-center justify-center flex-1 h-full relative transition-all duration-200",
+                isActive ? "text-primary" : "text-muted-foreground"
+              )}
+            >
+              <Icon size={18} />
+            </Link>
+          );
+        })}
+      </div>
+    </div>
   );
 };
 
@@ -312,7 +188,6 @@ export const Layout = ({
   branches = []
 }: LayoutProps) => {
   const [isScrolled, setIsScrolled] = useState(false);
-  const [isMobileAdminDrawerOpen, setIsMobileAdminDrawerOpen] = useState(false);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
@@ -439,19 +314,7 @@ export const Layout = ({
         </div>
       </main>
 
-      <MobileBottomNav 
-        location={location} 
-        isAdmin={isAdmin} 
-        isReportsOnly={isReportsOnly}
-        onAdminMenuToggle={() => setIsMobileAdminDrawerOpen(true)}
-      />
-      <MobileAdminDrawer 
-        isOpen={isMobileAdminDrawerOpen}
-        onClose={() => setIsMobileAdminDrawerOpen(false)}
-        location={location}
-        isAdmin={isAdmin}
-        isReportsOnly={isReportsOnly}
-      />
+      <MobileBottomNav location={location} isAdmin={isAdmin} isReportsOnly={isReportsOnly} />
       <ThemeSwitcher theme={theme} onToggleTheme={onToggleTheme} />
     </div>
   );
