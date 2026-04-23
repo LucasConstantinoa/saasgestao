@@ -1,11 +1,9 @@
-import React, { useState } from 'react';
-import { Building2, X, CheckCircle2, Facebook, ChevronDown, Shield, Eye as EyeIcon, Edit3, ShoppingCart } from 'lucide-react';
+import { Building2, CheckCircle2, Shield, Eye as EyeIcon, Edit3, ShoppingCart, ShieldCheck } from 'lucide-react';
 import { Branch, Company } from '@/types';
 import { cn } from '@/lib/utils';
-import { PermissionSelector } from './PermissionSelector';
 import { supabase } from '@/lib/supabase';
 import { useToasts } from '@/components/Toast';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 
 interface BranchCardProps {
   branch: Branch;
@@ -18,13 +16,14 @@ interface BranchCardProps {
 const permissionLevels = [
   { value: 'none', label: 'Sem Acesso', icon: Shield, color: 'text-muted-foreground', bg: 'bg-muted/30' },
   { value: 'view', label: 'Visualizar', icon: EyeIcon, color: 'text-sky-500', bg: 'bg-sky-500/10' },
-  { value: 'add_sale', label: 'Add Venda', icon: ShoppingCart, color: 'text-amber-500', bg: 'bg-amber-500/10' },
+  { value: 'reports_only', label: 'Relatórios', icon: ShieldCheck, color: 'text-amber-500', bg: 'bg-amber-500/10' },
+  { value: 'add_sale', label: 'Add Venda', icon: ShoppingCart, color: 'text-violet-500', bg: 'bg-violet-500/10' },
   { value: 'edit', label: 'Editar', icon: Edit3, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
 ];
 
 export const BranchCard = ({ branch, company, permissions, onPermissionChange, userId }: BranchCardProps) => {
   const { addToast } = useToasts();
-  const [expanded, setExpanded] = useState(false);
+
 
   const perm = permissions[branch.id];
   const currentLevel = perm?.level || 'none';
@@ -43,8 +42,8 @@ export const BranchCard = ({ branch, company, permissions, onPermissionChange, u
       layout
       className={cn(
         "rounded-xl border transition-all duration-300 overflow-hidden",
-        hasPermissions 
-          ? "bg-primary/3 border-primary/20 shadow-[0_0_15px_rgba(var(--primary-rgb),0.04)]" 
+        hasPermissions
+          ? "bg-primary/3 border-primary/20 shadow-[0_0_15px_rgba(var(--primary-rgb),0.04)]"
           : "bg-[var(--surface)]/60 border-border/40 hover:border-border/70"
       )}
     >
@@ -52,8 +51,8 @@ export const BranchCard = ({ branch, company, permissions, onPermissionChange, u
         {/* Icon */}
         <div className={cn(
           "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all duration-300",
-          hasPermissions 
-            ? "bg-gradient-to-br from-primary/20 to-primary/5 text-primary" 
+          hasPermissions
+            ? "bg-gradient-to-br from-primary/20 to-primary/5 text-primary"
             : "bg-muted/50 text-muted-foreground"
         )}>
           <Building2 size={14} />
