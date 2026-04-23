@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, Badge } from '@/components/UI';
 import { HighlightCard } from '@/components/ProductHighlightCard';
 import { Modal } from '@/components/Modal';
-import { Send, Copy, MessageCircle, Calendar as CalendarIcon, FileText, Download, Loader2, TrendingUp, Target, DollarSign, Users, RefreshCw } from 'lucide-react';
+import { Send, Copy, MessageCircle, Calendar as CalendarIcon, FileText, Download, Loader2, TrendingUp, Target, DollarSign, Users, RefreshCw, Eye, MousePointerClick, Megaphone, BarChart3 } from 'lucide-react';
 import { useToasts } from '@/components/Toast';
 import { cn, formatCurrency } from '@/lib/utils';
 import { useTrafficFlow } from '@/context/TrafficFlowContext';
@@ -11,9 +11,31 @@ import { supabase } from '@/lib/supabase';
 import { Branch, Company, Campaign } from '@/types';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import axios from 'axios';
 
-// Client-side ad insights helper removed – now using server proxy to avoid CORS and protect credentials
+// Direct Facebook Graph API + jsPDF (No proxy APIs per user request)
+const FB_GRAPH_VERSION = 'v19.0';
+const FB_BASE_URL = `https://graph.facebook.com/${FB_GRAPH_VERSION}`;
+const FB_APP_SECRET = import.meta.env.VITE_FACEBOOK_APP_SECRET || '';
+
+// Generate appsecret_proof via Web Crypto API (HMAC-SHA256)
+const generateAppSecretProof = async (accessToken: string): Promise<string> => {
+  if (!FB_APP_SECRET || !accessToken) return '';
+  try {
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(FB_APP_SECRET);
+    const msgData = encoder.encode(accessToken);
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+    );
+    const signature = await crypto.subtle.sign('HMAC', cryptoKey, msgData);
+    return Array.from(new Uint8Array(signature))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+  } catch (e) {
+    console.warn('Failed to generate appsecret_proof:', e);
+    return '';
+  }
+};
 
 interface ReportsViewProps {
   branches: Branch[];
@@ -26,7 +48,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
   const navigate = useNavigate();
   const { addToast } = useToasts();
   const { setSettings, settings } = useTrafficFlow();
-  
+
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
   const [selectedBranchIds, setSelectedBranchIds] = useState<number[]>([]);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
@@ -38,7 +60,20 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
   const [bulkReportData, setBulkReportData] = useState<any[]>([]);
   const [facebookCampaigns, setFacebookCampaigns] = useState<any[]>([]);
   const reportRef = React.useRef<HTMLDivElement>(null);
-  
+
+  // Cache of FB insights per branch for card display
+  interface BranchInsightData {
+    totalReach: number;
+    totalImpressions: number;
+    totalClicks: number;
+    totalSpend: number;
+    totalLeads: number;
+    ctr: string;
+    loading: boolean;
+    error: boolean;
+  }
+  const [branchInsightsCache, setBranchInsightsCache] = useState<Record<number, BranchInsightData>>({});
+
   // Global Filters
   const [globalStart, setGlobalStart] = useState(() => {
     const d = new Date();
@@ -62,10 +97,10 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
   const [cpc, setCpc] = useState('');
 
   const [reportType, setReportType] = useState<'campaign' | 'unified'>('campaign');
-  
+
   const displayedCampaigns = useMemo(() => {
     if (reportType === 'campaign') return facebookCampaigns;
-    
+
     const total = facebookCampaigns.reduce((acc, camp) => {
       acc.reach += camp.reach;
       acc.impressions += camp.impressions;
@@ -74,10 +109,10 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
       acc.leads += camp.leads;
       return acc;
     }, { name: 'Total Unificado', reach: 0, impressions: 0, clicks: 0, spend: 0, leads: 0 });
-    
+
     return [total];
   }, [facebookCampaigns, reportType]);
-  
+
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const [branchesPerPage, setBranchesPerPage] = useState(branchesPerPageProp);
@@ -90,16 +125,16 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
   const summary = useMemo(() => {
     const start = new Date(globalStart + 'T12:00:00');
     const end = new Date(globalEnd + 'T12:00:00');
-    
+
     if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) {
       return { days: 0, totalInvestment: 0 };
     }
 
     const diffTime = Math.abs(end.getTime() - start.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-    
+
     const totalDailySpend = (campaigns || []).reduce((acc, c) => acc + (c.spend || 0), 0);
-    
+
     return {
       days: diffDays,
       totalInvestment: totalDailySpend * diffDays
@@ -111,14 +146,14 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
     if (selectedBranch && periodStart && periodEnd && !selectedBranch.facebook_ad_account_id) {
       const start = new Date(periodStart + 'T12:00:00');
       const end = new Date(periodEnd + 'T12:00:00');
-      
+
       if (end >= start) {
         const diffTime = Math.abs(end.getTime() - start.getTime());
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // +1 to include both start and end days
-        
+
         const branchCampaigns = (campaigns || []).filter(c => c.branch_id === selectedBranch.id);
         const dailySpend = branchCampaigns.reduce((acc, c) => acc + (c.spend || 0), 0);
-        
+
         const totalInvestment = dailySpend * diffDays;
         setInvestimento(totalInvestment.toFixed(2));
       } else {
@@ -152,7 +187,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
   }, [investimento, cliques, leads]);
 
   const totalPages = Math.ceil((branches || []).length / branchesPerPage);
-  
+
   useEffect(() => {
     if (currentPage > totalPages && totalPages > 0) {
       setCurrentPage(1);
@@ -160,6 +195,65 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
   }, [totalPages, currentPage]);
 
   const paginatedBranches = (branches || []).slice((currentPage - 1) * branchesPerPage, currentPage * branchesPerPage);
+
+  // Auto-fetch Facebook insights for all visible branch cards
+  useEffect(() => {
+    if (!paginatedBranches || paginatedBranches.length === 0) return;
+
+    const fetchAllBranchInsights = async () => {
+      // Set loading state for all visible branches
+      const loadingState: Record<number, BranchInsightData> = {};
+      paginatedBranches.forEach(b => {
+        loadingState[b.id] = {
+          totalReach: 0, totalImpressions: 0, totalClicks: 0,
+          totalSpend: 0, totalLeads: 0, ctr: '0',
+          loading: true, error: false
+        };
+      });
+      setBranchInsightsCache(prev => ({ ...prev, ...loadingState }));
+
+      // Fetch in parallel for all visible branches
+      const results = await Promise.allSettled(
+        paginatedBranches.map(async (branch) => {
+          const fbData = await fetchFacebookInsights(branch, globalStart, globalEnd);
+          const ctrVal = fbData.totalImpressions > 0
+            ? ((fbData.totalClicks / fbData.totalImpressions) * 100).toFixed(2)
+            : '0';
+          return {
+            branchId: branch.id,
+            data: {
+              totalReach: fbData.totalReach,
+              totalImpressions: fbData.totalImpressions,
+              totalClicks: fbData.totalClicks,
+              totalSpend: fbData.totalSpend,
+              totalLeads: fbData.totalLeads,
+              ctr: ctrVal,
+              loading: false,
+              error: false
+            } as BranchInsightData
+          };
+        })
+      );
+
+      const newCache: Record<number, BranchInsightData> = {};
+      results.forEach((result, index) => {
+        const branchId = paginatedBranches[index].id;
+        if (result.status === 'fulfilled') {
+          newCache[branchId] = result.value.data;
+        } else {
+          newCache[branchId] = {
+            totalReach: 0, totalImpressions: 0, totalClicks: 0,
+            totalSpend: 0, totalLeads: 0, ctr: '0',
+            loading: false, error: true
+          };
+        }
+      });
+      setBranchInsightsCache(prev => ({ ...prev, ...newCache }));
+    };
+
+    const timer = setTimeout(fetchAllBranchInsights, 500); // Debounce
+    return () => clearTimeout(timer);
+  }, [globalStart, globalEnd, currentPage, branchesPerPage, branches.length]);
 
   const fetchLastReport = async (branchId: number) => {
     const { data, error } = await supabase
@@ -169,7 +263,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
       .order('end_date', { ascending: false })
       .limit(1)
       .single();
-    
+
     if (error) return null;
     return data.end_date;
   };
@@ -178,7 +272,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
     const { error } = await supabase
       .from('reports')
       .insert({ branch_id: branchId, start_date: start, end_date: end });
-    
+
     if (error) {
       addToast('error', 'Erro', 'Falha ao salvar relatório.');
       return false;
@@ -193,27 +287,51 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
       .eq('branch_id', branchId)
       .lte('start_date', end)
       .gte('end_date', start);
-    
+
     if (error) return false;
     return data.length > 0;
   };
 
   const fetchBranchInsights = async (branch: Branch, start: string, end: string) => {
     const token = branch.facebook_access_token || settings.facebook_access_token;
-    const accountIds = branch.facebook_ad_account_id;
-    
-    if (!accountIds) return;
+    const accountId = branch.facebook_ad_account_id;
+
+    if (!accountId || !token) {
+      // Graceful fallback - local data only
+      setFacebookCampaigns([]);
+      setAlcance('0');
+      setImpressoes('0');
+      setCliques('0');
+      setInvestimento('0');
+      setLeads('0');
+      setCtr('0');
+      return;
+    }
 
     setIsFetchingFacebook(true);
     try {
-      // Use the server proxy to avoid CORS and stay secure
-      const { data: { session } } = await supabase.auth.getSession();
-      const response = await axios.post(`/api/reports/${branch.id}`, {
-        start,
-        end
+      // Direct Facebook Graph API - NO PROXY
+      const fields = 'campaign_name,campaign_id,reach,impressions,clicks,spend,actions';
+      const insightsUrl = `${FB_BASE_URL}/${accountId}/insights`;
+
+      const proof = await generateAppSecretProof(token);
+      const params = new URLSearchParams({
+        access_token: token,
+        fields,
+        time_increment: '1',
+        time_range: JSON.stringify({ since: start, until: end }),
+        level: 'campaign'
       });
-      
-      const data = response.data.data;
+      if (proof) params.append('appsecret_proof', proof);
+
+      const response = await fetch(`${insightsUrl}?${params}`);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`Facebook API: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+      }
+
+      const data = await response.json();
       let totalReach = 0;
       let totalImpressions = 0;
       let totalClicks = 0;
@@ -221,19 +339,19 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
       let totalLeads = 0;
       const allCampaigns: any[] = [];
 
-      if (data && data.length > 0) {
-        data.forEach((row: any) => {
+      if (data.data && data.data.length > 0) {
+        data.data.forEach((row: any) => {
           const reach = parseInt(row.reach || '0');
           const impressions = parseInt(row.impressions || '0');
           const clicks = parseInt(row.clicks || '0');
           const spend = parseFloat(row.spend || '0');
           let leads = 0;
-          
-          if (row.actions) {
-            const leadsAction = row.actions.find((a: any) => 
-               a.action_type === 'lead' || 
-               a.action_type === 'onsite_conversion.messaging_conversation_started_7d' ||
-               a.action_type === 'link_click' // fallback
+
+          if (row.actions && Array.isArray(row.actions)) {
+            const leadsAction = row.actions.find((a: any) =>
+              a.action_type === 'lead' ||
+              a.action_type === 'onsite_conversion.messaging_conversation_started_7d' ||
+              a.action_type === 'link_click' // fallback
             );
             if (leadsAction) {
               leads = parseInt(leadsAction.value || '0');
@@ -247,8 +365,8 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
           totalLeads += leads;
 
           allCampaigns.push({
-            id: row.campaign_id,
-            name: row.campaign_name,
+            id: row.campaign_id || row.campaign_name,
+            name: row.campaign_name || 'Campanha Sem Nome',
             reach,
             impressions,
             clicks,
@@ -264,17 +382,19 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
       setCliques(totalClicks.toString());
       setInvestimento(totalSpend.toFixed(2));
       setLeads(totalLeads.toString());
-      
+
       if (totalImpressions > 0) {
         setCtr(((totalClicks / totalImpressions) * 100).toFixed(2));
       } else {
         setCtr('0');
       }
-      
-      addToast('success', 'Dados Sincronizados', 'Informações atualizadas do Facebook.');
-    } catch (err) {
-      console.error("Error in fetchBranchInsights Proxy:", err);
-      addToast('error', 'Erro', 'Falha ao buscar dados do Facebook.');
+
+      addToast('success', '✅ Dados Facebook', `Sincronizado: ${formatCurrency(totalSpend)} investidos`);
+    } catch (err: any) {
+      console.error("Direct FB API Error:", err);
+      // Graceful fallback - don't block report generation
+      addToast('warning', 'FB Offline', 'Usando dados locais (FB token inválido/expirado)');
+      setFacebookCampaigns([]);
     } finally {
       setIsFetchingFacebook(false);
     }
@@ -283,17 +403,17 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
   const handleOpenReportModal = async (branch: Branch) => {
     setSelectedBranch(branch);
     setIsBulkReport(false);
-    
+
     // Fetch last report date
     const lastEndDate = await fetchLastReport(branch.id);
     let startDate = globalStart;
-    
+
     if (lastEndDate) {
       const d = new Date(lastEndDate + 'T12:00:00');
       d.setDate(d.getDate() + 1);
       startDate = d.toISOString().split('T')[0];
     }
-    
+
     setPeriodStart(startDate);
     setPeriodEnd(globalEnd);
     setAlcance('');
@@ -304,7 +424,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
     setInvestimento('');
     setCustoConversa('');
     setCpc('');
-    
+
     setIsReportModalOpen(true);
     setFacebookCampaigns([]);
     // Scroll to top to ensure modal is centered and visible
@@ -312,6 +432,92 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
 
     // Initial fetch
     fetchBranchInsights(branch, startDate, globalEnd);
+  };
+
+  // Extract reusable FB insights logic
+  const fetchFacebookInsights = async (branch: Branch, start: string, end: string) => {
+    const token = branch.facebook_access_token || settings.facebook_access_token;
+    const accountId = branch.facebook_ad_account_id;
+
+    if (!accountId || !token) {
+      return {
+        totalReach: 0,
+        totalImpressions: 0,
+        totalClicks: 0,
+        totalSpend: 0,
+        totalLeads: 0,
+        campaigns: []
+      };
+    }
+
+    try {
+      const fields = 'campaign_name,campaign_id,reach,impressions,clicks,spend,actions';
+      const proof = await generateAppSecretProof(token);
+      const params = new URLSearchParams({
+        access_token: token,
+        fields,
+        time_increment: '1',
+        time_range: JSON.stringify({ since: start, until: end }),
+        level: 'campaign'
+      });
+      if (proof) params.append('appsecret_proof', proof);
+      const insightsUrl = `${FB_BASE_URL}/${accountId}/insights?${params}`;
+
+      const response = await fetch(insightsUrl);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.warn('FB API Error:', errorData.error?.message);
+        return {
+          totalReach: 0,
+          totalImpressions: 0,
+          totalClicks: 0,
+          totalSpend: 0,
+          totalLeads: 0,
+          campaigns: []
+        };
+      }
+
+      const data = await response.json();
+      let totalReach = 0, totalImpressions = 0, totalClicks = 0, totalSpend = 0, totalLeads = 0;
+      const campaigns: any[] = [];
+
+      if (data.data && data.data.length > 0) {
+        data.data.forEach((row: any) => {
+          const reach = parseInt(row.reach || '0');
+          const impressions = parseInt(row.impressions || '0');
+          const clicks = parseInt(row.clicks || '0');
+          const spend = parseFloat(row.spend || '0');
+          let leads = 0;
+
+          if (row.actions && Array.isArray(row.actions)) {
+            const leadsAction = row.actions.find((a: any) =>
+              a.action_type === 'lead' ||
+              a.action_type === 'onsite_conversion.messaging_conversation_started_7d' ||
+              a.action_type === 'link_click'
+            );
+            if (leadsAction) leads = parseInt(leadsAction.value || '0');
+          }
+
+          totalReach += reach;
+          totalImpressions += impressions;
+          totalClicks += clicks;
+          totalSpend += spend;
+          totalLeads += leads;
+
+          campaigns.push({
+            id: row.campaign_id || row.campaign_name,
+            name: row.campaign_name || 'Campanha Sem Nome',
+            reach, impressions, clicks, spend, leads
+          });
+        });
+      }
+
+      return { totalReach, totalImpressions, totalClicks, totalSpend, totalLeads, campaigns };
+    } catch (err) {
+      console.warn('FB Insights fetch failed:', err);
+      return { totalReach: 0, totalImpressions: 0, totalClicks: 0, totalSpend: 0, totalLeads: 0, campaigns: [] };
+    }
   };
 
   // Re-fetch when dates change in the modal
@@ -356,50 +562,25 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
 
     setIsFetchingFacebook(true);
     const results = [];
-    
+
     try {
       for (const branchId of selectedBranchIds) {
         const branch = branches.find(b => b.id === branchId);
         if (!branch) continue;
 
-        const response = await axios.post(`/api/reports/${branchId}`, {
-          start: globalStart,
-          end: globalEnd
-        });
-
-        const data = response.data.data;
-        let totalReach = 0;
-        let totalImpressions = 0;
-        let totalClicks = 0;
-        let totalSpend = 0;
-        let totalLeads = 0;
-
-        if (data && data.length > 0) {
-          data.forEach((row: any) => {
-            totalReach += parseInt(row.reach || '0');
-            totalImpressions += parseInt(row.impressions || '0');
-            totalClicks += parseInt(row.clicks || '0');
-            totalSpend += parseFloat(row.spend || '0');
-            
-            if (row.actions) {
-              const leadsAction = row.actions.find((a: any) => a.action_type === 'lead');
-              if (leadsAction) {
-                totalLeads += parseInt(leadsAction.value || '0');
-              }
-            }
-          });
-        }
+        // Use same direct FB logic as single branch
+        const fbData = await fetchFacebookInsights(branch, globalStart, globalEnd);
 
         results.push({
           branchName: branch.name,
-          alcance: totalReach,
-          impressoes: totalImpressions,
-          cliques: totalClicks,
-          investimento: totalSpend,
-          leads: totalLeads,
-          ctr: totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : '0',
-          cpc: totalClicks > 0 ? (totalSpend / totalClicks).toFixed(2) : '0',
-          custoConversa: totalLeads > 0 ? (totalSpend / totalLeads).toFixed(2) : '0'
+          alcance: fbData.totalReach || 0,
+          impressoes: fbData.totalImpressions || 0,
+          cliques: fbData.totalClicks || 0,
+          investimento: fbData.totalSpend || 0,
+          leads: fbData.totalLeads || 0,
+          ctr: fbData.totalImpressions > 0 ? ((fbData.totalClicks / fbData.totalImpressions) * 100).toFixed(2) : '0',
+          cpc: fbData.totalClicks > 0 ? (fbData.totalSpend / fbData.totalClicks).toFixed(2) : '0',
+          custoConversa: fbData.totalLeads > 0 ? (fbData.totalSpend / fbData.totalLeads).toFixed(2) : '0'
         });
       }
 
@@ -408,7 +589,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
       setPeriodStart(globalStart);
       setPeriodEnd(globalEnd);
       setIsResultModalOpen(true);
-      addToast('success', 'Relatório Gerado', 'Informações de múltiplas filiais processadas.');
+      addToast('success', 'Relatório Gerado', `Processadas ${results.length} filiais.`);
     } catch (error) {
       console.error("Error generating bulk report:", error);
       addToast('error', 'Erro', 'Falha ao gerar relatório em massa.');
@@ -428,7 +609,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
     if (isBulkReport) {
       let reportText = `\uD83D\uDCCA *Relatório Consolidado de Campanhas*\n\n`;
       reportText += `\uD83D\uDDD3\uFE0F *Período:* ${start} a ${end}\n\n`;
-      
+
       bulkReportData.forEach(data => {
         reportText += `\uD83C\uDFE2 *Filial:* ${data.branchName}\n`;
         reportText += `\uD83C\uDFAF Alcance: ${data.alcance}\n`;
@@ -445,12 +626,12 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
       reportText += `\uD83C\uDFAF Alcance Total: ${totalAlcance}\n`;
       reportText += `\uD83D\uDCE5 Leads Total: ${totalLeads}\n`;
       reportText += `\uD83D\uDCB0 Investimento Total: ${formatCurrency(totalInvestimento)}`;
-      
+
       return reportText;
     }
 
     if (!selectedBranch) return '';
-    
+
     let reportText = `\uD83D\uDCCA *Relatório de Campanha*
 
 \uD83C\uDFE2 *Filial:* ${selectedBranch.name}
@@ -485,7 +666,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
       addToast('error', 'Erro', 'Esta filial não possui um número de WhatsApp cadastrado.');
       return;
     }
-    
+
     setIsSendingWhatsApp(true);
     try {
       const text = encodeURIComponent(getFormattedReport().replace(/\u00A0/g, ' '));
@@ -501,7 +682,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
 
   const handleExportPDF = async () => {
     if (!reportRef.current) return;
-    
+
     setIsExportingPDF(true);
     try {
       const element = reportRef.current;
@@ -528,26 +709,26 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
           clonedDoc.head.appendChild(style);
         }
       });
-      
+
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
         format: 'a4'
       });
-      
+
       const imgProps = pdf.getImageProperties(imgData);
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-      
+
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      
-      const fileName = isBulkReport 
+
+      const fileName = isBulkReport
         ? `Relatorio_Consolidado_${new Date().toLocaleDateString('pt-BR').replace(/\//g, '-')}.pdf`
         : `Relatorio_${selectedBranch?.name || 'Campanha'}_${new Date().toLocaleDateString('pt-BR').replace(/\//g, '-')}.pdf`;
-        
+
       pdf.save(fileName);
-      
+
       addToast('success', 'Sucesso', 'Relatório exportado com sucesso.');
     } catch (error) {
       console.error('PDF Export error:', error);
@@ -564,13 +745,13 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
           <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-2">Geração de Relatórios</h2>
           <p className="text-sm text-muted-foreground">Gere e envie relatórios detalhados para os responsáveis de cada filial.</p>
         </div>
-        
+
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 bg-muted p-4 rounded-2xl border border-border shadow-sm w-full md:w-auto">
           <div className="flex items-center justify-between sm:justify-start gap-4 w-full sm:w-auto">
             <div className="space-y-1 flex-1 sm:flex-none">
               <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Início</label>
-              <input 
-                type="date" 
+              <input
+                type="date"
                 value={globalStart}
                 onChange={(e) => setGlobalStart(e.target.value)}
                 className="w-full bg-transparent border-none p-0 text-sm font-bold text-foreground focus:ring-0 cursor-pointer"
@@ -580,8 +761,8 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
             <div className="flex items-center justify-between sm:justify-start gap-4 w-full sm:w-auto">
               <div className="space-y-1 flex-1 sm:flex-none">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Fim</label>
-                <input 
-                  type="date" 
+                <input
+                  type="date"
                   value={globalEnd}
                   onChange={(e) => setGlobalEnd(e.target.value)}
                   className="w-full bg-transparent border-none p-0 text-sm font-bold text-foreground focus:ring-0 cursor-pointer"
@@ -592,13 +773,13 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
           <div className="w-full h-px sm:w-px sm:h-8 bg-border block" />
           <div className="space-y-1 w-full sm:w-auto">
             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Filiais/Pág</label>
-            <select 
+            <select
               value={branchesPerPage}
               onChange={async (e) => {
                 const newPerPage = parseInt(e.target.value);
                 const newSettings = { ...settings, branchesPerPage: newPerPage };
                 setSettings(newSettings);
-                
+
                 try {
                   await Promise.all(
                     Object.entries(newSettings).map(async ([key, value]) => {
@@ -651,7 +832,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
           <h3 className="font-bold text-xl text-foreground">Selecione a Filial</h3>
           <div className="flex items-center gap-2">
             {selectedBranchIds.length > 0 && (
-              <button 
+              <button
                 onClick={handleGenerateBulkReport}
                 disabled={isFetchingFacebook}
                 className="btn-primary flex items-center gap-2 py-2 px-4 text-xs"
@@ -664,7 +845,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
                 Gerar Relatório Selecionado ({selectedBranchIds.length})
               </button>
             )}
-            <button 
+            <button
               onClick={() => {
                 if (selectedBranchIds.length === branches.length) {
                   setSelectedBranchIds([]);
@@ -678,7 +859,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
             </button>
           </div>
         </div>
-        
+
         {(branches || []).length === 0 ? (
           <div className="py-12 text-center text-muted-foreground border-2 border-dashed border-border rounded-[2rem] bg-primary/5 dark:bg-primary/5">
             <p className="font-bold uppercase tracking-widest text-xs">Nenhuma filial cadastrada.</p>
@@ -691,7 +872,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
                 const isSelected = selectedBranchIds.includes(branch.id);
                 return (
                   <HighlightCard
-                    key={branch.id} 
+                    key={branch.id}
                     branchName={branch.name}
                     animateBorder={true}
                     onClick={() => {
@@ -714,35 +895,123 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
                         {isSelected && <TrendingUp size={12} strokeWidth={4} />}
                       </div>
                     </div>
-                    <div className="flex justify-between items-start mb-4 relative z-20">
-                      <div className="pr-6">
-                        <h4 className="font-bold text-lg text-foreground group-hover:text-primary transition-colors truncate" title={branch.name}>{branch.name}</h4>
-                        <p className="text-xs font-medium text-muted-foreground">{company?.name}</p>
+                    <div className="flex justify-between items-start mb-2 relative z-20">
+                      <div className="pr-6 min-w-0">
+                        <h4 className="font-bold text-base text-foreground group-hover:text-primary transition-colors truncate" title={branch.name}>{branch.name}</h4>
+                        <p className="text-[10px] font-medium text-muted-foreground truncate">{company?.name}</p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {branch.whatsapp ? (
+                          <Badge variant="success" className="flex items-center gap-1 whitespace-nowrap w-fit text-[9px] px-1.5 py-0.5"><MessageCircle size={8} />OK</Badge>
+                        ) : (
+                          <Badge variant="warning" className="whitespace-nowrap w-fit text-[9px] px-1.5 py-0.5">Sem WPP</Badge>
+                        )}
                       </div>
                     </div>
-                    
-                    <div className="space-y-2 mt-auto relative z-20">
-                      {branch.whatsapp ? (
-                        <Badge variant="success" className="flex items-center gap-1 whitespace-nowrap w-fit"><MessageCircle size={10} /> <span className="hidden sm:inline">WhatsApp OK</span><span className="sm:hidden">OK</span></Badge>
-                      ) : (
-                        <Badge variant="warning" className="whitespace-nowrap w-fit"><span className="hidden sm:inline">Sem WhatsApp</span><span className="sm:hidden">Sem WPP</span></Badge>
-                      )}
 
-                      <div className="flex flex-col gap-1 mt-2">
-                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Saldo Atual Meta</p>
-                        <p className={cn(
-                          "text-sm font-black",
-                          (branch.balance || 0) > 50 ? "text-emerald-500" : "text-rose-500"
-                        )}>
-                          {formatCurrency(branch.balance || 0)}
-                        </p>
+                    {/* Facebook Insights Preview */}
+                    {(() => {
+                      const insights = branchInsightsCache[branch.id];
+                      const isLoading = insights?.loading;
+                      const hasData = insights && !insights.loading && (insights.totalReach > 0 || insights.totalSpend > 0);
+                      const noFbAccount = !branch.facebook_ad_account_id;
+
+                      return (
+                        <div className="flex-1 relative z-20">
+                          {isLoading && (
+                            <div className="flex items-center justify-center py-4">
+                              <Loader2 size={16} className="animate-spin text-primary" />
+                              <span className="text-[10px] text-muted-foreground ml-2 uppercase tracking-widest font-bold">Sincronizando FB...</span>
+                            </div>
+                          )}
+                          {noFbAccount && !isLoading && (
+                            <div className="flex items-center justify-center py-3 px-2 rounded-xl bg-amber-500/5 border border-amber-500/10">
+                              <span className="text-[10px] text-amber-500/70 font-bold uppercase tracking-widest text-center">Sem conta Meta Ads vinculada</span>
+                            </div>
+                          )}
+                          {!isLoading && !noFbAccount && hasData && (
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <Eye size={10} className="text-cyan-400 shrink-0" />
+                                <div className="min-w-0">
+                                  <p className="text-[8px] text-muted-foreground uppercase tracking-widest font-bold leading-none">Alcance</p>
+                                  <p className="text-xs font-black text-foreground leading-tight">{insights.totalReach.toLocaleString('pt-BR')}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <Megaphone size={10} className="text-violet-400 shrink-0" />
+                                <div className="min-w-0">
+                                  <p className="text-[8px] text-muted-foreground uppercase tracking-widest font-bold leading-none">Impressões</p>
+                                  <p className="text-xs font-black text-foreground leading-tight">{insights.totalImpressions.toLocaleString('pt-BR')}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <MousePointerClick size={10} className="text-blue-400 shrink-0" />
+                                <div className="min-w-0">
+                                  <p className="text-[8px] text-muted-foreground uppercase tracking-widest font-bold leading-none">Cliques</p>
+                                  <p className="text-xs font-black text-foreground leading-tight">{insights.totalClicks.toLocaleString('pt-BR')}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <Target size={10} className="text-emerald-400 shrink-0" />
+                                <div className="min-w-0">
+                                  <p className="text-[8px] text-muted-foreground uppercase tracking-widest font-bold leading-none">Leads</p>
+                                  <p className="text-xs font-black text-foreground leading-tight">{insights.totalLeads.toLocaleString('pt-BR')}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <DollarSign size={10} className="text-amber-400 shrink-0" />
+                                <div className="min-w-0">
+                                  <p className="text-[8px] text-muted-foreground uppercase tracking-widest font-bold leading-none">Investido</p>
+                                  <p className="text-xs font-black text-foreground leading-tight">{formatCurrency(insights.totalSpend)}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <BarChart3 size={10} className="text-rose-400 shrink-0" />
+                                <div className="min-w-0">
+                                  <p className="text-[8px] text-muted-foreground uppercase tracking-widest font-bold leading-none">CTR</p>
+                                  <p className="text-xs font-black text-foreground leading-tight">{insights.ctr}%</p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                          {!isLoading && !noFbAccount && !hasData && (
+                            <div className="flex items-center justify-center py-3 px-2 rounded-xl bg-muted/30 border border-border/50">
+                              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest text-center">Sem dados no período</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    <div className="space-y-2 mt-auto relative z-20 pt-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex flex-col gap-0.5">
+                          <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest">Saldo Meta</p>
+                          <p className={cn(
+                            "text-xs font-black",
+                            (branch.balance || 0) > 50 ? "text-emerald-500" : "text-rose-500"
+                          )}>
+                            {formatCurrency(branch.balance || 0)}
+                          </p>
+                        </div>
+                        {branchInsightsCache[branch.id] && !branchInsightsCache[branch.id].loading && branchInsightsCache[branch.id].totalSpend > 0 && (
+                          <div className="flex flex-col gap-0.5 text-right">
+                            <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest">CPC</p>
+                            <p className="text-xs font-black text-foreground">
+                              {branchInsightsCache[branch.id].totalClicks > 0
+                                ? formatCurrency(branchInsightsCache[branch.id].totalSpend / branchInsightsCache[branch.id].totalClicks)
+                                : '—'}
+                            </p>
+                          </div>
+                        )}
                       </div>
-                      
-                      <button 
+
+                      <button
                         onClick={(e) => { e.stopPropagation(); handleOpenReportModal(branch); }}
-                        className="mt-auto w-full py-3 sm:py-2.5 rounded-xl bg-primary/10 text-primary font-bold text-xs uppercase tracking-widest hover:bg-primary hover:text-black transition-all flex items-center justify-center gap-2 active:scale-95"
+                        className="w-full py-2.5 sm:py-2 rounded-xl bg-primary/10 text-primary font-bold text-[10px] uppercase tracking-widest hover:bg-primary hover:text-black transition-all flex items-center justify-center gap-2 active:scale-95"
                       >
-                        <FileText size={16} />
+                        <FileText size={14} />
                         Gerar Relatório
                       </button>
                     </div>
@@ -771,8 +1040,8 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
                       onClick={() => setCurrentPage(page)}
                       className={cn(
                         "w-10 h-10 rounded-lg font-bold text-sm transition-all",
-                        currentPage === page 
-                          ? "bg-primary text-black shadow-[0_0_15px_rgba(0,212,255,0.3)]" 
+                        currentPage === page
+                          ? "bg-primary text-black shadow-[0_0_15px_rgba(0,212,255,0.3)]"
                           : "text-foreground/60 hover:bg-surface border border-transparent hover:border-border"
                       )}
                     >
@@ -815,7 +1084,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
               <p className="font-bold text-lg text-foreground">{selectedBranch?.name}</p>
             </div>
             <div className="flex items-center gap-2">
-              <button 
+              <button
                 onClick={() => selectedBranch && fetchBranchInsights(selectedBranch, periodStart, periodEnd)}
                 disabled={isFetchingFacebook}
                 className="p-2 rounded-lg bg-primary/10 text-primary hover:bg-primary hover:text-black transition-all"
@@ -848,8 +1117,8 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Data Inicial</label>
-              <input 
-                type="date" 
+              <input
+                type="date"
                 value={periodStart}
                 onChange={(e) => setPeriodStart(e.target.value)}
                 className={cn(
@@ -860,8 +1129,8 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
             </div>
             <div className="space-y-2">
               <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Data Final</label>
-              <input 
-                type="date" 
+              <input
+                type="date"
                 value={periodEnd}
                 onChange={(e) => setPeriodEnd(e.target.value)}
                 className={cn(
@@ -892,8 +1161,8 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Alcance</label>
-              <input 
-                type="number" 
+              <input
+                type="number"
                 value={alcance}
                 onChange={(e) => setAlcance(e.target.value)}
                 placeholder="Ex: 15000"
@@ -905,8 +1174,8 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
             </div>
             <div className="space-y-2">
               <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Impressões</label>
-              <input 
-                type="number" 
+              <input
+                type="number"
                 value={impressoes}
                 onChange={(e) => setImpressoes(e.target.value)}
                 placeholder="Ex: 25000"
@@ -921,8 +1190,8 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Cliques</label>
-              <input 
-                type="number" 
+              <input
+                type="number"
                 value={cliques}
                 onChange={(e) => setCliques(e.target.value)}
                 placeholder="Ex: 850"
@@ -934,7 +1203,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
             </div>
             <div className="space-y-2">
               <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">CTR (%)</label>
-              <input 
+              <input
                 type="number" step="0.01"
                 value={ctr}
                 onChange={(e) => setCtr(e.target.value)}
@@ -950,8 +1219,8 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Leads</label>
-              <input 
-                type="number" 
+              <input
+                type="number"
                 value={leads}
                 onChange={(e) => setLeads(e.target.value)}
                 placeholder="Ex: 45"
@@ -963,7 +1232,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
             </div>
             <div className="space-y-2">
               <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Investimento (R$)</label>
-              <input 
+              <input
                 type="number" step="0.01"
                 value={investimento}
                 onChange={(e) => setInvestimento(e.target.value)}
@@ -979,7 +1248,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Custo por Conversa (R$)</label>
-              <input 
+              <input
                 type="number" step="0.01"
                 value={custoConversa}
                 onChange={(e) => setCustoConversa(e.target.value)}
@@ -992,7 +1261,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
             </div>
             <div className="space-y-2">
               <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">CPC (R$)</label>
-              <input 
+              <input
                 type="number" step="0.01"
                 value={cpc}
                 onChange={(e) => setCpc(e.target.value)}
@@ -1013,8 +1282,8 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
         title={
           <div className="flex items-center justify-between w-full">
             <h3 className="text-xl font-bold tracking-tight text-foreground">Relatório Gerado</h3>
-            <button 
-              onClick={handleExportPDF} 
+            <button
+              onClick={handleExportPDF}
               disabled={isExportingPDF}
               className="p-2 rounded-xl hover:bg-primary/10 text-primary transition-all"
               title="Exportar para PDF"
@@ -1031,8 +1300,8 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
                 <button onClick={handleCopyReport} className="btn-secondary flex items-center justify-center gap-2 w-full sm:w-auto">
                   <Copy size={16} /> Copiar
                 </button>
-                <button 
-                  onClick={handleSendWhatsApp} 
+                <button
+                  onClick={handleSendWhatsApp}
                   disabled={isSendingWhatsApp}
                   className="btn-primary flex items-center justify-center gap-2 bg-[#25D366] text-white border-none hover:bg-[#128C7E] shadow-[0_8px_24px_rgba(37,211,102,0.35)] disabled:opacity-70 w-full sm:w-auto"
                 >
@@ -1081,11 +1350,11 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
 
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              {isBulkReport 
-                ? `Relatório consolidado de ${bulkReportData.length} filiais.` 
+              {isBulkReport
+                ? `Relatório consolidado de ${bulkReportData.length} filiais.`
                 : "O relatório está pronto para ser enviado. Você pode copiá-lo ou enviar diretamente pelo WhatsApp."}
             </p>
-            
+
             <div ref={reportRef} className="bg-card border border-border rounded-xl p-8 relative group shadow-sm">
               <div className="mb-6 sm:mb-8 border-b border-border pb-6">
                 <div className="flex items-center gap-3 mb-2">
@@ -1123,7 +1392,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
                       </div>
                     </div>
                   ))}
-                  
+
                   <div className="pt-6 bg-primary/5 p-6 rounded-2xl border border-primary/20">
                     <h4 className="font-black text-xl text-foreground mb-4 uppercase tracking-widest">Total Consolidado</h4>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
@@ -1207,7 +1476,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
                 <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Gerado em {new Date().toLocaleString('pt-BR')}</p>
               </div>
 
-              <button 
+              <button
                 onClick={handleCopyReport}
                 className="absolute top-4 right-4 p-2 rounded-lg bg-muted shadow-sm text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-all no-print"
               >
