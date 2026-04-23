@@ -163,7 +163,6 @@ const ModalBase = ({ title, subtitle, icon: Icon, children, onClose }: any) => (
   </motion.div>
 );
 
-
 export const ConfigurationView = () => {
   const [activeModal, setActiveModal] = useState<string | null>(null);
   const { isAdmin, settings, setSettings, branches } = useTrafficFlow();

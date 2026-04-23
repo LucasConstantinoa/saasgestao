@@ -11,9 +11,10 @@ import { supabase } from '@/lib/supabase';
 import { Branch, Company, Campaign } from '@/types';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import axios from 'axios';
 
-// Direct Facebook Graph API + jsPDF (No proxy APIs per user request)
-const FB_GRAPH_VERSION = 'v19.0';
+// Direct Facebook Graph API + jsPDF
+const FB_GRAPH_VERSION = 'v22.0';
 const FB_BASE_URL = `https://graph.facebook.com/${FB_GRAPH_VERSION}`;
 const FB_APP_SECRET = import.meta.env.VITE_FACEBOOK_APP_SECRET || '';
 const FB_MASTER_TOKEN = import.meta.env.VITE_FACEBOOK_ACCESS_TOKEN || '';
@@ -38,6 +39,17 @@ const generateAppSecretProof = async (accessToken: string): Promise<string> => {
   }
 };
 
+export interface BranchInsightData {
+  totalReach: number;
+  totalImpressions: number;
+  totalClicks: number;
+  totalSpend: number;
+  totalLeads: number;
+  ctr: string;
+  loading: boolean;
+  error: boolean;
+}
+
 interface ReportsViewProps {
   branches: Branch[];
   companies: Company[];
@@ -52,7 +64,6 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
 
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
   const [selectedBranchIds, setSelectedBranchIds] = useState<number[]>([]);
-  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [isResultModalOpen, setIsResultModalOpen] = useState(false);
   const [isExportingPDF, setIsExportingPDF] = useState(false);
   const [isSendingWhatsApp, setIsSendingWhatsApp] = useState(false);
@@ -60,20 +71,8 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
   const [isBulkReport, setIsBulkReport] = useState(false);
   const [bulkReportData, setBulkReportData] = useState<any[]>([]);
   const [facebookCampaigns, setFacebookCampaigns] = useState<any[]>([]);
-  const reportRef = React.useRef<HTMLDivElement>(null);
-
-  // Cache of FB insights per branch for card display
-  interface BranchInsightData {
-    totalReach: number;
-    totalImpressions: number;
-    totalClicks: number;
-    totalSpend: number;
-    totalLeads: number;
-    ctr: string;
-    loading: boolean;
-    error: boolean;
-  }
   const [branchInsightsCache, setBranchInsightsCache] = useState<Record<number, BranchInsightData>>({});
+  const reportRef = React.useRef<HTMLDivElement>(null);
 
   // Global Filters
   const [globalStart, setGlobalStart] = useState(() => {
@@ -197,65 +196,6 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
 
   const paginatedBranches = (branches || []).slice((currentPage - 1) * branchesPerPage, currentPage * branchesPerPage);
 
-  // Auto-fetch Facebook insights for all visible branch cards
-  useEffect(() => {
-    if (!paginatedBranches || paginatedBranches.length === 0) return;
-
-    const fetchAllBranchInsights = async () => {
-      // Set loading state for all visible branches
-      const loadingState: Record<number, BranchInsightData> = {};
-      paginatedBranches.forEach(b => {
-        loadingState[b.id] = {
-          totalReach: 0, totalImpressions: 0, totalClicks: 0,
-          totalSpend: 0, totalLeads: 0, ctr: '0',
-          loading: true, error: false
-        };
-      });
-      setBranchInsightsCache(prev => ({ ...prev, ...loadingState }));
-
-      // Fetch in parallel for all visible branches
-      const results = await Promise.allSettled(
-        paginatedBranches.map(async (branch) => {
-          const fbData = await fetchFacebookInsights(branch, globalStart, globalEnd);
-          const ctrVal = fbData.totalImpressions > 0
-            ? ((fbData.totalClicks / fbData.totalImpressions) * 100).toFixed(2)
-            : '0';
-          return {
-            branchId: branch.id,
-            data: {
-              totalReach: fbData.totalReach,
-              totalImpressions: fbData.totalImpressions,
-              totalClicks: fbData.totalClicks,
-              totalSpend: fbData.totalSpend,
-              totalLeads: fbData.totalLeads,
-              ctr: ctrVal,
-              loading: false,
-              error: false
-            } as BranchInsightData
-          };
-        })
-      );
-
-      const newCache: Record<number, BranchInsightData> = {};
-      results.forEach((result, index) => {
-        const branchId = paginatedBranches[index].id;
-        if (result.status === 'fulfilled') {
-          newCache[branchId] = result.value.data;
-        } else {
-          newCache[branchId] = {
-            totalReach: 0, totalImpressions: 0, totalClicks: 0,
-            totalSpend: 0, totalLeads: 0, ctr: '0',
-            loading: false, error: true
-          };
-        }
-      });
-      setBranchInsightsCache(prev => ({ ...prev, ...newCache }));
-    };
-
-    const timer = setTimeout(fetchAllBranchInsights, 500); // Debounce
-    return () => clearTimeout(timer);
-  }, [globalStart, globalEnd, currentPage, branchesPerPage, branches.length]);
-
   const fetchLastReport = async (branchId: number) => {
     const { data, error } = await supabase
       .from('reports')
@@ -293,33 +233,27 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
     return data.length > 0;
   };
 
-  const fetchBranchInsights = async (branch: Branch, start: string, end: string) => {
+  // --------------------------------------------------------------------------
+  // DIRECT FACEBOOK FETCHING (CLEAN ID & MASTER TOKEN)
+  // --------------------------------------------------------------------------
+  const fetchFacebookInsights = async (branch: Branch, start: string, end: string) => {
     const token = FB_MASTER_TOKEN || branch.facebook_access_token || settings.facebook_access_token;
 
-    let accountId = branch.facebook_ad_account_id;
-    if (accountId && !accountId.startsWith('act_')) {
-      accountId = `act_${accountId}`;
+    // Fix for Error #100: Clean ID from pipe suffix
+    let cleanId = (branch.facebook_ad_account_id || '').split('|')[0].trim();
+    if (cleanId && !cleanId.startsWith('act_')) {
+      cleanId = `act_${cleanId}`;
     }
 
-    if (!accountId || !token) {
-      // Graceful fallback - local data only
-      setFacebookCampaigns([]);
-      setAlcance('0');
-      setImpressoes('0');
-      setCliques('0');
-      setInvestimento('0');
-      setLeads('0');
-      setCtr('0');
-      return;
+    if (!cleanId || !token) {
+      return { totalReach: 0, totalImpressions: 0, totalClicks: 0, totalSpend: 0, totalLeads: 0, campaigns: [] };
     }
 
-    setIsFetchingFacebook(true);
     try {
-      // Direct Facebook Graph API - NO PROXY
-      const fields = 'campaign_name,campaign_id,reach,impressions,clicks,spend,actions';
-      const insightsUrl = `${FB_BASE_URL}/${accountId}/insights`;
-
       const proof = await generateAppSecretProof(token);
+      const fields = 'campaign_name,campaign_id,reach,impressions,clicks,spend,actions';
+      const insightsUrl = `${FB_BASE_URL}/${cleanId}/insights`;
+
       const params = new URLSearchParams({
         access_token: token,
         fields,
@@ -333,158 +267,8 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(`Facebook API: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
-      }
-
-      const data = await response.json();
-      let totalReach = 0;
-      let totalImpressions = 0;
-      let totalClicks = 0;
-      let totalSpend = 0;
-      let totalLeads = 0;
-      const allCampaigns: any[] = [];
-
-      if (data.data && data.data.length > 0) {
-        data.data.forEach((row: any) => {
-          const reach = parseInt(row.reach || '0');
-          const impressions = parseInt(row.impressions || '0');
-          const clicks = parseInt(row.clicks || '0');
-          const spend = parseFloat(row.spend || '0');
-          let leads = 0;
-
-          if (row.actions && Array.isArray(row.actions)) {
-            const leadsAction = row.actions.find((a: any) =>
-              a.action_type === 'lead' ||
-              a.action_type === 'onsite_conversion.messaging_conversation_started_7d' ||
-              a.action_type === 'link_click' // fallback
-            );
-            if (leadsAction) {
-              leads = parseInt(leadsAction.value || '0');
-            }
-          }
-
-          totalReach += reach;
-          totalImpressions += impressions;
-          totalClicks += clicks;
-          totalSpend += spend;
-          totalLeads += leads;
-
-          allCampaigns.push({
-            id: row.campaign_id || row.campaign_name,
-            name: row.campaign_name || 'Campanha Sem Nome',
-            reach,
-            impressions,
-            clicks,
-            spend,
-            leads
-          });
-        });
-      }
-
-      setFacebookCampaigns(allCampaigns);
-      setAlcance(totalReach.toString());
-      setImpressoes(totalImpressions.toString());
-      setCliques(totalClicks.toString());
-      setInvestimento(totalSpend.toFixed(2));
-      setLeads(totalLeads.toString());
-
-      if (totalImpressions > 0) {
-        setCtr(((totalClicks / totalImpressions) * 100).toFixed(2));
-      } else {
-        setCtr('0');
-      }
-
-      addToast('success', '✅ Dados Facebook', `Sincronizado: ${formatCurrency(totalSpend)} investidos`);
-    } catch (err: any) {
-      console.error("Direct FB API Error:", err);
-      // Graceful fallback - don't block report generation
-      addToast('warning', 'FB Offline', 'Usando dados locais (FB token inválido/expirado)');
-      setFacebookCampaigns([]);
-    } finally {
-      setIsFetchingFacebook(false);
-    }
-  };
-
-  const handleOpenReportModal = async (branch: Branch) => {
-    setSelectedBranch(branch);
-    setIsBulkReport(false);
-
-    // Fetch last report date
-    const lastEndDate = await fetchLastReport(branch.id);
-    let startDate = globalStart;
-
-    if (lastEndDate) {
-      const d = new Date(lastEndDate + 'T12:00:00');
-      d.setDate(d.getDate() + 1);
-      startDate = d.toISOString().split('T')[0];
-    }
-
-    setPeriodStart(startDate);
-    setPeriodEnd(globalEnd);
-    setAlcance('');
-    setImpressoes('');
-    setCliques('');
-    setCtr('');
-    setLeads('');
-    setInvestimento('');
-    setCustoConversa('');
-    setCpc('');
-
-    setIsReportModalOpen(true);
-    setFacebookCampaigns([]);
-    // Scroll to top to ensure modal is centered and visible
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-
-    // Initial fetch
-    fetchBranchInsights(branch, startDate, globalEnd);
-  };
-
-  // Extract reusable FB insights logic
-  const fetchFacebookInsights = async (branch: Branch, start: string, end: string) => {
-    const token = FB_MASTER_TOKEN || branch.facebook_access_token || settings.facebook_access_token;
-
-    let accountId = branch.facebook_ad_account_id;
-    if (accountId && !accountId.startsWith('act_')) {
-      accountId = `act_${accountId}`;
-    }
-
-    if (!accountId || !token) {
-      return {
-        totalReach: 0,
-        totalImpressions: 0,
-        totalClicks: 0,
-        totalSpend: 0,
-        totalLeads: 0,
-        campaigns: []
-      };
-    }
-
-    try {
-      const fields = 'campaign_name,campaign_id,reach,impressions,clicks,spend,actions';
-      const proof = await generateAppSecretProof(token);
-      const params = new URLSearchParams({
-        access_token: token,
-        fields,
-        time_increment: '1',
-        time_range: JSON.stringify({ since: start, until: end }),
-        level: 'campaign'
-      });
-      if (proof) params.append('appsecret_proof', proof);
-      const insightsUrl = `${FB_BASE_URL}/${accountId}/insights?${params}`;
-
-      const response = await fetch(insightsUrl);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.warn('FB API Error:', errorData.error?.message);
-        return {
-          totalReach: 0,
-          totalImpressions: 0,
-          totalClicks: 0,
-          totalSpend: 0,
-          totalLeads: 0,
-          campaigns: []
-        };
+        console.warn(`FB API Error for ${cleanId}:`, errorData.error?.message);
+        return { totalReach: 0, totalImpressions: 0, totalClicks: 0, totalSpend: 0, totalLeads: 0, campaigns: [] };
       }
 
       const data = await response.json();
@@ -529,15 +313,119 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
     }
   };
 
-  // Re-fetch when dates change in the modal
+  // --------------------------------------------------------------------------
+  // AUTO-FETCH HOOK FOR RENDERED CARDS
+  // --------------------------------------------------------------------------
   useEffect(() => {
-    if (isReportModalOpen && selectedBranch && periodStart && periodEnd) {
-      const timer = setTimeout(() => {
-        fetchBranchInsights(selectedBranch, periodStart, periodEnd);
-      }, 800); // Debounce
-      return () => clearTimeout(timer);
+    if (!paginatedBranches || paginatedBranches.length === 0) return;
+
+    const fetchAllBranchInsights = async () => {
+      const loadingState: Record<number, BranchInsightData> = {};
+      paginatedBranches.forEach(b => {
+        loadingState[b.id] = {
+          totalReach: 0, totalImpressions: 0, totalClicks: 0, totalSpend: 0, totalLeads: 0, ctr: '0',
+          ...branchInsightsCache[b.id],
+          loading: true, error: false
+        };
+      });
+      setBranchInsightsCache(prev => ({ ...prev, ...loadingState }));
+
+      const results = await Promise.allSettled(
+        paginatedBranches.map(async (branch) => {
+          const fbData = await fetchFacebookInsights(branch, globalStart, globalEnd);
+          const ctrVal = fbData.totalImpressions > 0
+            ? ((fbData.totalClicks / fbData.totalImpressions) * 100).toFixed(2)
+            : '0';
+
+          return {
+            branchId: branch.id,
+            data: {
+              ...fbData,
+              ctr: ctrVal,
+              loading: false,
+              error: false
+            } as BranchInsightData
+          };
+        })
+      );
+
+      const newCache: Record<number, BranchInsightData> = {};
+      results.forEach((result, index) => {
+        const branchId = paginatedBranches[index].id;
+        if (result.status === 'fulfilled') {
+          newCache[branchId] = result.value.data;
+        } else {
+          newCache[branchId] = {
+            totalReach: 0, totalImpressions: 0, totalClicks: 0, totalSpend: 0, totalLeads: 0, ctr: '0',
+            loading: false, error: true
+          };
+        }
+      });
+
+      setBranchInsightsCache(prev => ({ ...prev, ...newCache }));
+    };
+
+    const timer = setTimeout(fetchAllBranchInsights, 800);
+    return () => clearTimeout(timer);
+  }, [globalStart, globalEnd, currentPage, branchesPerPage, branches.length]);
+
+  const fetchBranchInsights = async (branch: Branch, start: string, end: string) => {
+    setIsFetchingFacebook(true);
+    try {
+      const fbData = await fetchFacebookInsights(branch, start, end);
+
+      setFacebookCampaigns(fbData.campaigns);
+      setAlcance(fbData.totalReach.toString());
+      setImpressoes(fbData.totalImpressions.toString());
+      setCliques(fbData.totalClicks.toString());
+      setInvestimento(fbData.totalSpend.toFixed(2));
+      setLeads(fbData.totalLeads.toString());
+
+      if (fbData.totalImpressions > 0) {
+        setCtr(((fbData.totalClicks / fbData.totalImpressions) * 100).toFixed(2));
+      } else {
+        setCtr('0');
+      }
+
+      if (fbData.totalSpend > 0) {
+        addToast('success', '✅ Dados Facebook', `Sincronizado: ${formatCurrency(fbData.totalSpend)} investidos via Graph API`);
+      } else {
+        addToast('warning', 'Aviso', 'Nenhum dado encontrado para este período.');
+      }
+    } catch (err: any) {
+      console.error("Direct FB API Error:", err);
+      addToast('warning', 'FB Offline', 'Usando dados locais (FB token inválido/expirado)');
+      setFacebookCampaigns([]);
+    } finally {
+      setIsFetchingFacebook(false);
     }
-  }, [periodStart, periodEnd, isReportModalOpen]);
+  };
+
+  const handleOpenReportModal = async (branch: Branch) => {
+    setSelectedBranch(branch);
+    setIsBulkReport(false);
+
+    // Fetch last report date
+    const lastEndDate = await fetchLastReport(branch.id);
+    let startDate = globalStart;
+
+    if (lastEndDate) {
+      const d = new Date(lastEndDate + 'T12:00:00');
+      d.setDate(d.getDate() + 1);
+      startDate = d.toISOString().split('T')[0];
+    }
+
+    setPeriodStart(startDate);
+    setPeriodEnd(globalEnd);
+    setFacebookCampaigns([]);
+
+    // Open the result directly
+    setIsResultModalOpen(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    // Initial fetch to load data into the open Result modal automatically
+    await fetchBranchInsights(branch, startDate, globalEnd);
+  };
 
   const handleGenerateReport = async () => {
     console.log("handleGenerateReport called");
@@ -577,19 +465,44 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
         const branch = branches.find(b => b.id === branchId);
         if (!branch) continue;
 
-        // Use same direct FB logic as single branch
-        const fbData = await fetchFacebookInsights(branch, globalStart, globalEnd);
+        const response = await axios.post(`/api/reports/${branchId}`, {
+          start: globalStart,
+          end: globalEnd
+        });
+
+        const data = response.data.data;
+        let totalReach = 0;
+        let totalImpressions = 0;
+        let totalClicks = 0;
+        let totalSpend = 0;
+        let totalLeads = 0;
+
+        if (data && data.length > 0) {
+          data.forEach((row: any) => {
+            totalReach += parseInt(row.reach || '0');
+            totalImpressions += parseInt(row.impressions || '0');
+            totalClicks += parseInt(row.clicks || '0');
+            totalSpend += parseFloat(row.spend || '0');
+
+            if (row.actions) {
+              const leadsAction = row.actions.find((a: any) => a.action_type === 'lead');
+              if (leadsAction) {
+                totalLeads += parseInt(leadsAction.value || '0');
+              }
+            }
+          });
+        }
 
         results.push({
           branchName: branch.name,
-          alcance: fbData.totalReach || 0,
-          impressoes: fbData.totalImpressions || 0,
-          cliques: fbData.totalClicks || 0,
-          investimento: fbData.totalSpend || 0,
-          leads: fbData.totalLeads || 0,
-          ctr: fbData.totalImpressions > 0 ? ((fbData.totalClicks / fbData.totalImpressions) * 100).toFixed(2) : '0',
-          cpc: fbData.totalClicks > 0 ? (fbData.totalSpend / fbData.totalClicks).toFixed(2) : '0',
-          custoConversa: fbData.totalLeads > 0 ? (fbData.totalSpend / fbData.totalLeads).toFixed(2) : '0'
+          alcance: totalReach,
+          impressoes: totalImpressions,
+          cliques: totalClicks,
+          investimento: totalSpend,
+          leads: totalLeads,
+          ctr: totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : '0',
+          cpc: totalClicks > 0 ? (totalSpend / totalClicks).toFixed(2) : '0',
+          custoConversa: totalLeads > 0 ? (totalSpend / totalLeads).toFixed(2) : '0'
         });
       }
 
@@ -598,7 +511,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
       setPeriodStart(globalStart);
       setPeriodEnd(globalEnd);
       setIsResultModalOpen(true);
-      addToast('success', 'Relatório Gerado', `Processadas ${results.length} filiais.`);
+      addToast('success', 'Relatório Gerado', 'Informações de múltiplas filiais processadas.');
     } catch (error) {
       console.error("Error generating bulk report:", error);
       addToast('error', 'Erro', 'Falha ao gerar relatório em massa.');
@@ -732,9 +645,17 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
 
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
 
-      const fileName = isBulkReport
-        ? `Relatorio_Consolidado_${new Date().toLocaleDateString('pt-BR').replace(/\//g, '-')}.pdf`
-        : `Relatorio_${selectedBranch?.name || 'Campanha'}_${new Date().toLocaleDateString('pt-BR').replace(/\//g, '-')}.pdf`;
+      let fileName = '';
+      if (isBulkReport && bulkReportData && bulkReportData.length > 0) {
+        const branchNames = bulkReportData.map(d => d.branchName.replace(/\//g, '-').replace(/\\/g, '-'));
+        const namesJoin = branchNames.slice(0, 3).join('_');
+        const suffix = branchNames.length > 3 ? `_e_mais_${branchNames.length - 3}` : '';
+        fileName = `Relatorio_${namesJoin}${suffix}_${new Date().toLocaleDateString('pt-BR').replace(/\//g, '-')}.pdf`;
+      } else if (isBulkReport) {
+        fileName = `Relatorio_Consolidado_${new Date().toLocaleDateString('pt-BR').replace(/\//g, '-')}.pdf`;
+      } else {
+        fileName = `Relatorio_${(selectedBranch?.name || 'Campanha').replace(/\//g, '-').replace(/\\/g, '-')}_${new Date().toLocaleDateString('pt-BR').replace(/\//g, '-')}.pdf`;
+      }
 
       pdf.save(fileName);
 
@@ -904,123 +825,88 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
                         {isSelected && <TrendingUp size={12} strokeWidth={4} />}
                       </div>
                     </div>
-                    <div className="flex justify-between items-start mb-2 relative z-20">
-                      <div className="pr-6 min-w-0">
-                        <h4 className="font-bold text-base text-foreground group-hover:text-primary transition-colors truncate" title={branch.name}>{branch.name}</h4>
-                        <p className="text-[10px] font-medium text-muted-foreground truncate">{company?.name}</p>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        {branch.whatsapp ? (
-                          <Badge variant="success" className="flex items-center gap-1 whitespace-nowrap w-fit text-[9px] px-1.5 py-0.5"><MessageCircle size={8} />OK</Badge>
-                        ) : (
-                          <Badge variant="warning" className="whitespace-nowrap w-fit text-[9px] px-1.5 py-0.5">Sem WPP</Badge>
-                        )}
+                    <div className="flex justify-between items-start mb-4 relative z-20">
+                      <div className="pr-6">
+                        <h4 className="font-bold text-lg text-foreground group-hover:text-primary transition-colors truncate" title={branch.name}>{branch.name}</h4>
+                        <p className="text-xs font-medium text-muted-foreground">{company?.name}</p>
                       </div>
                     </div>
 
-                    {/* Facebook Insights Preview */}
-                    {(() => {
-                      const insights = branchInsightsCache[branch.id];
-                      const isLoading = insights?.loading;
-                      const hasData = insights && !insights.loading && (insights.totalReach > 0 || insights.totalSpend > 0);
-                      const noFbAccount = !branch.facebook_ad_account_id;
+                    <div className="space-y-2 mt-auto relative z-20">
+                      {branch.whatsapp ? (
+                        <Badge variant="success" className="flex items-center gap-1 whitespace-nowrap w-fit"><MessageCircle size={10} /> <span className="hidden sm:inline">WhatsApp OK</span><span className="sm:hidden">OK</span></Badge>
+                      ) : (
+                        <Badge variant="warning" className="whitespace-nowrap w-fit"><span className="hidden sm:inline">Sem WhatsApp</span><span className="sm:hidden">Sem WPP</span></Badge>
+                      )}
 
-                      return (
-                        <div className="flex-1 relative z-20">
-                          {isLoading && (
-                            <div className="flex items-center justify-center py-4">
-                              <Loader2 size={16} className="animate-spin text-primary" />
-                              <span className="text-[10px] text-muted-foreground ml-2 uppercase tracking-widest font-bold">Sincronizando FB...</span>
-                            </div>
-                          )}
-                          {noFbAccount && !isLoading && (
-                            <div className="flex items-center justify-center py-3 px-2 rounded-xl bg-amber-500/5 border border-amber-500/10">
-                              <span className="text-[10px] text-amber-500/70 font-bold uppercase tracking-widest text-center">Sem conta Meta Ads vinculada</span>
-                            </div>
-                          )}
-                          {!isLoading && !noFbAccount && hasData && (
-                            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
-                              <div className="flex items-center gap-1.5">
-                                <Eye size={10} className="text-cyan-400 shrink-0" />
-                                <div className="min-w-0">
-                                  <p className="text-[8px] text-muted-foreground uppercase tracking-widest font-bold leading-none">Alcance</p>
-                                  <p className="text-xs font-black text-foreground leading-tight">{insights.totalReach.toLocaleString('pt-BR')}</p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                <Megaphone size={10} className="text-violet-400 shrink-0" />
-                                <div className="min-w-0">
-                                  <p className="text-[8px] text-muted-foreground uppercase tracking-widest font-bold leading-none">Impressões</p>
-                                  <p className="text-xs font-black text-foreground leading-tight">{insights.totalImpressions.toLocaleString('pt-BR')}</p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                <MousePointerClick size={10} className="text-blue-400 shrink-0" />
-                                <div className="min-w-0">
-                                  <p className="text-[8px] text-muted-foreground uppercase tracking-widest font-bold leading-none">Cliques</p>
-                                  <p className="text-xs font-black text-foreground leading-tight">{insights.totalClicks.toLocaleString('pt-BR')}</p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                <Target size={10} className="text-emerald-400 shrink-0" />
-                                <div className="min-w-0">
-                                  <p className="text-[8px] text-muted-foreground uppercase tracking-widest font-bold leading-none">Leads</p>
-                                  <p className="text-xs font-black text-foreground leading-tight">{insights.totalLeads.toLocaleString('pt-BR')}</p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                <DollarSign size={10} className="text-amber-400 shrink-0" />
-                                <div className="min-w-0">
-                                  <p className="text-[8px] text-muted-foreground uppercase tracking-widest font-bold leading-none">Investido</p>
-                                  <p className="text-xs font-black text-foreground leading-tight">{formatCurrency(insights.totalSpend)}</p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                <BarChart3 size={10} className="text-rose-400 shrink-0" />
-                                <div className="min-w-0">
-                                  <p className="text-[8px] text-muted-foreground uppercase tracking-widest font-bold leading-none">CTR</p>
-                                  <p className="text-xs font-black text-foreground leading-tight">{insights.ctr}%</p>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                          {!isLoading && !noFbAccount && !hasData && (
-                            <div className="flex items-center justify-center py-3 px-2 rounded-xl bg-muted/30 border border-border/50">
-                              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest text-center">Sem dados no período</span>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
-
-                    <div className="space-y-2 mt-auto relative z-20 pt-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex flex-col gap-0.5">
-                          <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest">Saldo Meta</p>
-                          <p className={cn(
-                            "text-xs font-black",
-                            (branch.balance || 0) > 50 ? "text-emerald-500" : "text-rose-500"
-                          )}>
-                            {formatCurrency(branch.balance || 0)}
-                          </p>
-                        </div>
-                        {branchInsightsCache[branch.id] && !branchInsightsCache[branch.id].loading && branchInsightsCache[branch.id].totalSpend > 0 && (
-                          <div className="flex flex-col gap-0.5 text-right">
-                            <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest">CPC</p>
-                            <p className="text-xs font-black text-foreground">
-                              {branchInsightsCache[branch.id].totalClicks > 0
-                                ? formatCurrency(branchInsightsCache[branch.id].totalSpend / branchInsightsCache[branch.id].totalClicks)
-                                : '—'}
-                            </p>
-                          </div>
-                        )}
+                      <div className="flex flex-col gap-1 mt-2">
+                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Saldo Atual Meta</p>
+                        <p className={cn(
+                          "text-sm font-black",
+                          (branch.balance || 0) > 50 ? "text-emerald-500" : "text-rose-500"
+                        )}>
+                          {formatCurrency(branch.balance || 0)}
+                        </p>
                       </div>
+
+                      {/* Branch Facebook Insights Pre-fetch Display */}
+                      {(() => {
+                        const branchCache = branchInsightsCache[branch.id];
+                        return (
+                          <div className="mt-4 space-y-3 bg-black/40 p-3 rounded-xl border border-white/5">
+                            {branchCache && !branchCache.error ? (
+                              branchCache.loading ? (
+                                <div className="flex items-center justify-center p-4">
+                                  <Loader2 className="animate-spin text-primary opacity-50" size={24} />
+                                </div>
+                              ) : branchCache.totalImpressions > 0 ? (
+                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                  <div className="flex flex-col">
+                                    <span className="text-[9px] uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Eye size={10} className="text-cyan-400" /> Alcance</span>
+                                    <span className="font-bold">{branchCache.totalReach}</span>
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <span className="text-[9px] uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Megaphone size={10} className="text-violet-400" /> Impr</span>
+                                    <span className="font-bold">{branchCache.totalImpressions}</span>
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <span className="text-[9px] uppercase tracking-wider text-muted-foreground flex items-center gap-1"><MousePointerClick size={10} className="text-blue-400" /> Clicks</span>
+                                    <span className="font-bold">{branchCache.totalClicks}</span>
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <span className="text-[9px] uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Target size={10} className="text-emerald-400" /> Leads</span>
+                                    <span className="font-bold">{branchCache.totalLeads}</span>
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <span className="text-[9px] uppercase tracking-wider text-muted-foreground flex items-center gap-1"><DollarSign size={10} className="text-amber-400" /> Gasto</span>
+                                    <span className="font-bold">{formatCurrency(branchCache.totalSpend)}</span>
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <span className="text-[9px] uppercase tracking-wider text-muted-foreground flex items-center gap-1"><BarChart3 size={10} className="text-rose-400" /> CTR</span>
+                                    <span className="font-bold">{branchCache.ctr}%</span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col items-center justify-center p-4 text-center">
+                                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Sem dados no período</p>
+                                </div>
+                              )
+                            ) : (
+                              <div className="flex flex-col items-center justify-center p-4 text-center">
+                                <p className="text-[10px] font-bold text-rose-500/80 uppercase tracking-widest">
+                                  {branch.facebook_ad_account_id ? 'Erro (Token Offline)' : 'Sem ID Meta'}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       <button
                         onClick={(e) => { e.stopPropagation(); handleOpenReportModal(branch); }}
-                        className="w-full py-2.5 sm:py-2 rounded-xl bg-primary/10 text-primary font-bold text-[10px] uppercase tracking-widest hover:bg-primary hover:text-black transition-all flex items-center justify-center gap-2 active:scale-95"
+                        className="mt-auto w-full py-3 sm:py-2.5 rounded-xl bg-primary/10 text-primary font-bold text-xs uppercase tracking-widest hover:bg-primary hover:text-black transition-all flex items-center justify-center gap-2 active:scale-95"
                       >
-                        <FileText size={14} />
+                        <FileText size={16} />
                         Gerar Relatório
                       </button>
                     </div>
@@ -1074,216 +960,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
         )}
       </div>
 
-      {/* Modal de Preenchimento do Relatório */}
-      <Modal
-        isOpen={isReportModalOpen}
-        onClose={() => setIsReportModalOpen(false)}
-        title="Preencher Relatório"
-        footer={
-          <>
-            <button onClick={() => setIsReportModalOpen(false)} className="btn-secondary">Cancelar</button>
-            <button onClick={handleGenerateReport} className="btn-primary">Gerar Relatório</button>
-          </>
-        }
-      >
-        <div className="space-y-6">
-          <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 flex justify-between items-center">
-            <div>
-              <p className="text-xs font-bold text-primary/60 uppercase tracking-widest mb-1">Filial Selecionada</p>
-              <p className="font-bold text-lg text-foreground">{selectedBranch?.name}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => selectedBranch && fetchBranchInsights(selectedBranch, periodStart, periodEnd)}
-                disabled={isFetchingFacebook}
-                className="p-2 rounded-lg bg-primary/10 text-primary hover:bg-primary hover:text-black transition-all"
-                title="Sincronizar agora"
-              >
-                <RefreshCw size={16} className={cn(isFetchingFacebook && "animate-spin")} />
-              </button>
-              {isFetchingFacebook && (
-                <div className="flex items-center gap-2 text-primary">
-                  <span className="text-[10px] font-bold uppercase tracking-widest">Sincronizando...</span>
-                </div>
-              )}
-            </div>
-          </div>
 
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Tipo de Relatório</label>
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="radio" value="campaign" checked={reportType === 'campaign'} onChange={() => setReportType('campaign')} className="accent-primary" />
-                Por Campanha
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="radio" value="unified" checked={reportType === 'unified'} onChange={() => setReportType('unified')} className="accent-primary" />
-                Unificado
-              </label>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Data Inicial</label>
-              <input
-                type="date"
-                value={periodStart}
-                onChange={(e) => setPeriodStart(e.target.value)}
-                className={cn(
-                  "w-full rounded-xl px-4 py-3 focus:outline-none focus:border-primary/50 transition-all",
-                  "bg-surface border border-border text-foreground"
-                )}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Data Final</label>
-              <input
-                type="date"
-                value={periodEnd}
-                onChange={(e) => setPeriodEnd(e.target.value)}
-                className={cn(
-                  "w-full rounded-xl px-4 py-3 focus:outline-none focus:border-primary/50 transition-all",
-                  "bg-surface border border-border text-foreground"
-                )}
-              />
-            </div>
-          </div>
-
-          {displayedCampaigns.length > 0 && (
-            <div className="space-y-3">
-              <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Campanhas Ativas no Período</label>
-              <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
-                {displayedCampaigns.map((camp, index) => (
-                  <div key={camp.id || index} className="flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border text-xs">
-                    <div className="flex-1 min-w-0 mr-4">
-                      <p className="font-bold text-foreground truncate">{camp.name}</p>
-                      <p className="text-[10px] text-muted-foreground">Investimento: {formatCurrency(camp.spend)} • Leads: {camp.leads}</p>
-                    </div>
-                    <Badge variant="neutral" className="text-[9px] uppercase tracking-tighter">Facebook Ads</Badge>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Alcance</label>
-              <input
-                type="number"
-                value={alcance}
-                onChange={(e) => setAlcance(e.target.value)}
-                placeholder="Ex: 15000"
-                className={cn(
-                  "w-full rounded-xl px-4 py-3 focus:outline-none focus:border-primary/50 transition-all",
-                  "bg-surface border border-border text-foreground"
-                )}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Impressões</label>
-              <input
-                type="number"
-                value={impressoes}
-                onChange={(e) => setImpressoes(e.target.value)}
-                placeholder="Ex: 25000"
-                className={cn(
-                  "w-full rounded-xl px-4 py-3 focus:outline-none focus:border-primary/50 transition-all",
-                  "bg-surface border border-border text-foreground"
-                )}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Cliques</label>
-              <input
-                type="number"
-                value={cliques}
-                onChange={(e) => setCliques(e.target.value)}
-                placeholder="Ex: 850"
-                className={cn(
-                  "w-full rounded-xl px-4 py-3 focus:outline-none focus:border-primary/50 transition-all",
-                  "bg-surface border border-border text-foreground"
-                )}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">CTR (%)</label>
-              <input
-                type="number" step="0.01"
-                value={ctr}
-                onChange={(e) => setCtr(e.target.value)}
-                placeholder="Ex: 2.5"
-                className={cn(
-                  "w-full rounded-xl px-4 py-3 focus:outline-none focus:border-primary/50 transition-all",
-                  "bg-surface border border-border text-foreground"
-                )}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Leads</label>
-              <input
-                type="number"
-                value={leads}
-                onChange={(e) => setLeads(e.target.value)}
-                placeholder="Ex: 45"
-                className={cn(
-                  "w-full rounded-xl px-4 py-3 focus:outline-none focus:border-primary/50 transition-all",
-                  "bg-surface border border-border text-foreground"
-                )}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Investimento (R$)</label>
-              <input
-                type="number" step="0.01"
-                value={investimento}
-                onChange={(e) => setInvestimento(e.target.value)}
-                placeholder="Ex: 500.00"
-                className={cn(
-                  "w-full rounded-xl px-4 py-3 focus:outline-none focus:border-primary/50 transition-all",
-                  "bg-surface border border-border text-foreground"
-                )}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Custo por Conversa (R$)</label>
-              <input
-                type="number" step="0.01"
-                value={custoConversa}
-                onChange={(e) => setCustoConversa(e.target.value)}
-                placeholder="Ex: 5.50"
-                className={cn(
-                  "w-full rounded-xl px-4 py-3 focus:outline-none focus:border-primary/50 transition-all",
-                  "bg-surface border border-border text-foreground"
-                )}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">CPC (R$)</label>
-              <input
-                type="number" step="0.01"
-                value={cpc}
-                onChange={(e) => setCpc(e.target.value)}
-                placeholder="Ex: 0.85"
-                className={cn(
-                  "w-full rounded-xl px-4 py-3 focus:outline-none focus:border-primary/50 transition-all",
-                  "bg-surface border border-border text-foreground"
-                )}
-              />
-            </div>
-          </div>
-        </div>
-      </Modal>
 
       <Modal
         isOpen={isResultModalOpen}
