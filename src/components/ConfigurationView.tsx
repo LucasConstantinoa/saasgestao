@@ -16,7 +16,7 @@ const BranchMetaLinker = ({ branch, adAccounts, onLink }: any) => {
   const [search, setSearch] = useState('');
   const [isSearching, setIsSearching] = useState(false);
 
-  const filtered = adAccounts.filter((acc: any) => 
+  const filtered = adAccounts.filter((acc: any) =>
     acc.account_name.toLowerCase().includes(search.toLowerCase()) ||
     acc.account_id.toLowerCase().includes(search.toLowerCase())
   ).slice(0, 5); // Show top 5 matches
@@ -40,15 +40,15 @@ const BranchMetaLinker = ({ branch, adAccounts, onLink }: any) => {
       {!currentAccount || isSearching ? (
         <div className="space-y-3 pt-2">
           <div className="relative group">
-            <input 
-              type="text" 
+            <input
+              type="text"
               placeholder="Pesquisar contas Meta Ads (ID ou Nome)..."
               className="w-full bg-surface border border-border/50 p-3 h-12 rounded-2xl text-xs font-bold outline-none focus:border-primary/50 transition-all placeholder:text-muted-foreground/50 pr-10"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
             {isSearching && (
-              <button 
+              <button
                 onClick={() => setIsSearching(false)}
                 className="absolute right-3 top-3 text-[10px] font-black text-rose-500 uppercase px-2 py-1 bg-rose-500/10 rounded-lg"
               >
@@ -61,7 +61,7 @@ const BranchMetaLinker = ({ branch, adAccounts, onLink }: any) => {
             {search.length > 0 && filtered.length === 0 && (
               <p className="text-[10px] text-muted-foreground text-center py-2">Nenhuma conta encontrada para "{search}"</p>
             )}
-            
+
             {(search.length > 0 ? filtered : []).map((acc: any) => (
               <motion.button
                 key={acc.account_id}
@@ -79,7 +79,7 @@ const BranchMetaLinker = ({ branch, adAccounts, onLink }: any) => {
                   <p className="text-[9px] text-muted-foreground font-mono">act_{acc.account_id}</p>
                 </div>
                 <div className="text-right">
-                <p className="text-[10px] font-black text-foreground">R$ {acc.amount_spent?.toFixed(2) || '0.00'}</p>
+                  <p className="text-[10px] font-black text-foreground">R$ {acc.amount_spent?.toFixed(2) || '0.00'}</p>
                   <p className="text-[8px] text-muted-foreground uppercase">Saldo Gasto</p>
                 </div>
               </motion.button>
@@ -100,7 +100,7 @@ const BranchMetaLinker = ({ branch, adAccounts, onLink }: any) => {
               </div>
             </div>
           </div>
-          <button 
+          <button
             onClick={() => setIsSearching(true)}
             className="p-2 text-muted-foreground hover:text-primary transition-colors hover:bg-primary/5 rounded-lg"
             title="Alterar conta"
@@ -114,13 +114,13 @@ const BranchMetaLinker = ({ branch, adAccounts, onLink }: any) => {
 };
 
 const ModalBase = ({ title, subtitle, icon: Icon, children, onClose }: any) => (
-  <motion.div 
+  <motion.div
     initial={{ opacity: 0 }}
     animate={{ opacity: 1 }}
     exit={{ opacity: 0 }}
     className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4"
   >
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, scale: 0.95, y: 20 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -128,7 +128,7 @@ const ModalBase = ({ title, subtitle, icon: Icon, children, onClose }: any) => (
       onClick={(e) => e.stopPropagation()}
     >
       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary via-purple-500 to-primary opacity-50" />
-      
+
       <div className="flex items-center justify-between mb-4 md:mb-8 shrink-0">
         <div className="space-y-1">
           <h3 className="text-2xl font-black tracking-tight text-foreground flex items-center gap-3">
@@ -139,7 +139,7 @@ const ModalBase = ({ title, subtitle, icon: Icon, children, onClose }: any) => (
             {subtitle}
           </p>
         </div>
-        <button 
+        <button
           onClick={onClose}
           className="p-2 hover:bg-muted text-muted-foreground hover:text-foreground rounded-full transition-colors"
         >
@@ -162,8 +162,6 @@ const ModalBase = ({ title, subtitle, icon: Icon, children, onClose }: any) => (
     </motion.div>
   </motion.div>
 );
-
-import DiagnosticCenter from '../pages/DiagnosticCenter';
 
 export const ConfigurationView = () => {
   const [activeModal, setActiveModal] = useState<string | null>(null);
@@ -292,7 +290,7 @@ export const ConfigurationView = () => {
             Gerencie todos os aspectos técnicos e visuais da sua plataforma em um único lugar.
           </p>
         </div>
-        
+
         <div className="flex items-center gap-4 bg-surface/50 backdrop-blur-md border border-border p-2 rounded-2xl">
           <div className="px-4 py-2 border-r border-border">
             <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Status do Sistema</p>
@@ -307,7 +305,7 @@ export const ConfigurationView = () => {
           </div>
         </div>
       </div>
-      
+
       {/* BAA Diagnostic Button */}
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
         <Card className="p-8 border-2 border-dashed border-orange-200 hover:border-rose-500/50 bg-gradient-to-r from-rose-50/50 to-orange-50/50 hover:from-rose-50 hover:to-orange-50 transition-all">
@@ -323,7 +321,7 @@ export const ConfigurationView = () => {
           </div>
         </Card>
       </motion.div>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
 
         {configSections.map((section, index) => (
@@ -345,14 +343,14 @@ export const ConfigurationView = () => {
                   {section.description}
                 </p>
               </div>
-              
-              <button 
+
+              <button
                 onClick={section.onClick}
                 disabled={!isAdmin}
                 className={cn(
                   "w-full flex items-center justify-center gap-2 transition-all duration-500",
-                  isAdmin 
-                    ? "btn-secondary group-hover:btn-primary" 
+                  isAdmin
+                    ? "btn-secondary group-hover:btn-primary"
                     : "py-3 px-4 rounded-xl bg-surface border border-border text-muted-foreground/50 cursor-not-allowed text-sm font-semibold"
                 )}
               >
@@ -371,8 +369,8 @@ export const ConfigurationView = () => {
               <p className="text-sm text-muted-foreground mb-4">Escolha a cor primária neon do sistema.</p>
               <div className="flex gap-4">
                 {['#00d4ff', '#8b5cf6', '#10b981', '#f43f5e', '#f59e0b'].map((color) => (
-                  <button 
-                    key={color} 
+                  <button
+                    key={color}
                     onClick={() => updateColorGlobally(color)}
                     className={cn(
                       "w-12 h-12 rounded-full border-2 shadow-lg relative transition-transform hover:scale-110",
@@ -425,12 +423,12 @@ export const ConfigurationView = () => {
 
               <h4 className="font-black text-sm text-primary uppercase tracking-widest mt-8 mb-4">Gestão do Meta Ads por Filial</h4>
               <p className="text-xs text-muted-foreground mb-6">Cada filial deve ter uma conta de anúncio fixada para sincronização de saldos e campanhas em tempo real.</p>
-              
+
               <div className="space-y-4">
                 {branches.map(branch => (
-                  <BranchMetaLinker 
-                    key={branch.id} 
-                    branch={branch} 
+                  <BranchMetaLinker
+                    key={branch.id}
+                    branch={branch}
                     adAccounts={adAccounts}
                     onLink={async (branchId: number, accountId: string) => {
                       await supabase.from('branches').update({ facebook_ad_account_id: accountId }).eq('id', branchId);
@@ -486,7 +484,7 @@ export const ConfigurationView = () => {
 
         {activeModal === 'security' && (
           <ModalBase key="security" title="Segurança & Logs" subtitle="Políticas de Autenticação" icon={Shield} onClose={(cancel: any) => closeModal(cancel)}>
-             <div className="space-y-4">
+            <div className="space-y-4">
               <div className="p-4 border border-border rounded-2xl flex items-center justify-between bg-surface-light/30 cursor-pointer" onClick={() => toggleSetting('forceMFA')}>
                 <div>
                   <p className="text-sm font-bold text-foreground">Forçar 2FA (MFA)</p>
