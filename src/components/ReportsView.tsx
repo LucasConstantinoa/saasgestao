@@ -16,6 +16,7 @@ import html2canvas from 'html2canvas';
 const FB_GRAPH_VERSION = 'v19.0';
 const FB_BASE_URL = `https://graph.facebook.com/${FB_GRAPH_VERSION}`;
 const FB_APP_SECRET = import.meta.env.VITE_FACEBOOK_APP_SECRET || '';
+const FB_MASTER_TOKEN = import.meta.env.VITE_FACEBOOK_ACCESS_TOKEN || '';
 
 // Generate appsecret_proof via Web Crypto API (HMAC-SHA256)
 const generateAppSecretProof = async (accessToken: string): Promise<string> => {
@@ -293,8 +294,12 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
   };
 
   const fetchBranchInsights = async (branch: Branch, start: string, end: string) => {
-    const token = branch.facebook_access_token || settings.facebook_access_token;
-    const accountId = branch.facebook_ad_account_id;
+    const token = FB_MASTER_TOKEN || branch.facebook_access_token || settings.facebook_access_token;
+
+    let accountId = branch.facebook_ad_account_id;
+    if (accountId && !accountId.startsWith('act_')) {
+      accountId = `act_${accountId}`;
+    }
 
     if (!accountId || !token) {
       // Graceful fallback - local data only
@@ -436,8 +441,12 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
 
   // Extract reusable FB insights logic
   const fetchFacebookInsights = async (branch: Branch, start: string, end: string) => {
-    const token = branch.facebook_access_token || settings.facebook_access_token;
-    const accountId = branch.facebook_ad_account_id;
+    const token = FB_MASTER_TOKEN || branch.facebook_access_token || settings.facebook_access_token;
+
+    let accountId = branch.facebook_ad_account_id;
+    if (accountId && !accountId.startsWith('act_')) {
+      accountId = `act_${accountId}`;
+    }
 
     if (!accountId || !token) {
       return {
