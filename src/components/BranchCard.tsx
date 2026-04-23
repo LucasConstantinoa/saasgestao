@@ -91,8 +91,8 @@ export const BranchCard = ({ branch, company, permissions, onPermissionChange, u
       )}
     >
       <div
-        className="flex items-center gap-3 p-4 cursor-pointer hover:bg-muted/30 transition-colors"
-        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-3 p-4 cursor-pointer hover:bg-muted/30 transition-all group/card"
+        onClick={cyclePermission}
       >
         {/* Icon */}
         <div className={cn(
@@ -101,7 +101,7 @@ export const BranchCard = ({ branch, company, permissions, onPermissionChange, u
             ? "bg-gradient-to-br from-primary/20 to-primary/5 text-primary border border-primary/10"
             : "bg-muted text-muted-foreground border border-border/50"
         )}>
-          <Building2 size={18} />
+          <Building2 size={18} className="transition-transform group-hover/card:scale-110" />
         </div>
 
         {/* Info */}
@@ -115,26 +115,28 @@ export const BranchCard = ({ branch, company, permissions, onPermissionChange, u
           </div>
         </div>
 
-        {/* Level Toggle Button */}
+        {/* Action Button (Cycles) */}
+        <div className={cn(
+          "px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm border",
+          currentPerm.bg, currentPerm.color, "border-current/10",
+          "group-hover/card:brightness-110 group-active/card:scale-95"
+        )}>
+          {currentPerm.label}
+        </div>
+
+        {/* Settings Toggle (Expands) */}
         <button
           type="button"
-          onClick={cyclePermission}
+          onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
           className={cn(
-            "px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm",
-            currentPerm.bg, currentPerm.color,
-            "hover:brightness-110 active:scale-95 border border-current/10"
+            "p-2 rounded-xl transition-all border",
+            expanded
+              ? "bg-primary text-black border-primary shadow-lg shadow-primary/20 rotate-180"
+              : "bg-muted/50 text-muted-foreground border-border/40 hover:border-border hover:text-foreground"
           )}
         >
-          {currentPerm.label}
+          {expanded ? <ChevronDown size={14} /> : <Settings size={14} />}
         </button>
-
-        {/* Expand Toggle */}
-        <div className={cn(
-          "p-1.5 rounded-lg transition-all",
-          expanded ? "bg-primary/10 text-primary rotate-180" : "text-muted-foreground"
-        )}>
-          <ChevronDown size={16} />
-        </div>
       </div>
 
       {/* Expanded Content */}
