@@ -424,7 +424,12 @@ export default function App() {
   }, [addToast]);
   const [isSyncingBalance, setIsSyncingBalance] = useState(false);
 
-  const criticalNotifications = notifications.filter(n => n.type === 'critical' && !n.read);
+  const allowedBranchIdsForNotifications = isAdmin ? [] : (userPermissions || []).map(p => p.branch_id);
+  const filteredNotifications = isAdmin 
+    ? notifications 
+    : notifications.filter(n => !n.branch_id || allowedBranchIdsForNotifications.includes(n.branch_id));
+
+  const criticalNotifications = filteredNotifications.filter(n => n.type === 'critical' && !n.read);
 
   // Automatic notifications for low balance
   useEffect(() => {
@@ -2214,10 +2219,10 @@ export default function App() {
         breadcrumb={getBreadcrumb()}
         onAction={undefined}
         actionLabel={undefined}
-        notificationsCount={notifications.filter(n => !n.read).length}
+        notificationsCount={filteredNotifications.filter(n => !n.read).length}
         showNotificationsPopover={showNotificationsPopover}
         setShowNotificationsPopover={setShowNotificationsPopover}
-        notifications={notifications}
+        notifications={filteredNotifications}
         onMarkAllAsRead={handleMarkAllNotificationsAsRead}
         onMarkNotificationAsRead={handleMarkNotificationAsRead}
         onDeleteNotification={handleDeleteNotification}
@@ -2309,7 +2314,7 @@ export default function App() {
                       </button>
                     </div>
                     <NotificationsView 
-                      notifications={notifications} 
+                      notifications={filteredNotifications} 
                       onMarkAllAsRead={handleMarkAllNotificationsAsRead} 
                       onMarkAsRead={handleMarkNotificationAsRead}
                       onDelete={handleDeleteNotification}
