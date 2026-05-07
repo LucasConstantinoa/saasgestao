@@ -1217,115 +1217,17 @@ export default function App() {
   // Render Views
   const renderCompanies = () => (
     <div className="space-y-8">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KPI 
-          label="Total em Saldo" 
-          value={formatCurrency((isAdmin ? (branches || []) : (myBranches || [])).reduce((acc, b) => acc + (b?.balance || 0), 0))} 
-          icon={Wallet} 
-          trend={12}
-          trendLabel="vs mês anterior"
-          
-        />
-        <KPI 
-          label="ROI Médio" 
-          value="245%" 
-          icon={TrendingUp} 
-          trend={5}
-          trendLabel="vs mês anterior"
-          
-        />
-        <KPI 
-          label="Investimento Diário" 
-          value={formatCurrency((campaigns || []).reduce((acc, c) => acc + (c.spend || 0), 0))} 
-          icon={DollarSign} 
-          
-        />
-        <KPI 
-          label="Novas Vendas" 
-          value={(sales || []).length} 
-          icon={Users} 
-          trend={-2}
-          trendLabel="vs ontem"
-          
-        />
-      </div>
-
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <h3 className="text-lg font-bold tracking-tight text-foreground uppercase tracking-widest">Suas Empresas</h3>
-        <div className="flex items-center gap-2 p-1 bg-muted rounded-2xl border border-border overflow-x-auto no-scrollbar max-w-full">
-          {['all', 'association', 'direct_sales'].map((type) => (
-            <button
-              key={type}
-              onClick={() => setCompanyFilter(type as any)}
-              className={cn(
-                "px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all whitespace-nowrap",
-                companyFilter === type 
-                  ? "bg-[var(--surface)] text-primary dark:text-black shadow-lg shadow-primary/10" 
-                  : "text-muted-foreground hover:text-primary"
-              )}
-            >
-              {type === 'all' ? 'Todas' : type === 'association' ? 'Associação' : 'Venda Direta'}
-            </button>
-          ))}
-        </div>
+        <h3 className="text-lg font-bold tracking-tight text-foreground uppercase tracking-widest">Suas Empresas e Filiais</h3>
       </div>
 
-      {settings.cardLayout === 'expand' ? (
-        <ExpandableLayout
-          items={companies ? companies.filter(c => c && (companyFilter === 'all' || c.type === companyFilter)) : []}
-          keyExtractor={(c) => c?.id}
-          renderItem={(company, isExpanded) => (
-            <Card 
-              onClick={() => handleSelectCompany(company)} 
-               
-              isExpanded={isExpanded}
-              layout="expand"
-              hoverable={false}
-            >
-              <div className="flex flex-col h-full justify-between p-2">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center overflow-hidden shrink-0">
-                    {company.logo ? (
-                      <img src={company.logo} alt={company.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <Building2 className="text-primary" size={24} />
-                    )}
-                  </div>
-                  {isExpanded && (
-                    <motion.div 
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      className="overflow-hidden"
-                    >
-                      <h4 className="font-black text-lg text-foreground truncate">{company.name}</h4>
-                      <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Desde {company.created_at ? new Date(company.created_at).toLocaleDateString() : '-'}</p>
-                    </motion.div>
-                  )}
-                </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="companies-grid">
+        {companies && companies.length > 0 ? companies.filter(c => c && (companyFilter === 'all' || c.type === companyFilter)).map((company) => {
+          const companyBranches = (isAdmin ? (branches || []) : (myBranches || [])).filter(b => b && b.company_id === company.id);
+          
+          if (!isAdmin && companyBranches.length === 0) return null; // Don't show companies with no access for normal users
 
-                {isExpanded && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="grid grid-cols-2 gap-4 mt-4"
-                  >
-                    <div className="space-y-1">
-                      <span className="text-[9px] font-black text-muted-foreground uppercase tracking-[0.2em]">Budget</span>
-                      <p className="font-black text-foreground text-sm">{formatCurrency(company.monthly_budget)}</p>
-                    </div>
-                    <div className="space-y-1">
-                      <span className="text-[9px] font-black text-muted-foreground uppercase tracking-[0.2em]">Filiais</span>
-                      <p className="font-black text-foreground text-sm">{(branches || []).filter(b => b && b.company_id === company.id).length}</p>
-                    </div>
-                  </motion.div>
-                )}
-              </div>
-            </Card>
-          )}
-        />
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="companies-grid">
-          {companies && companies.length > 0 ? companies.filter(c => c && (companyFilter === 'all' || c.type === companyFilter)).map((company) => (
+          return (
             <InView key={company.id} triggerOnce={true} threshold={0.1}>
               {({ inView, ref }) => (
                 <motion.div
@@ -1333,64 +1235,70 @@ export default function App() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={inView ? { opacity: 1, y: 0 } : {}}
                   transition={{ duration: 0.5, ease: "easeOut" }}
-                  className="min-h-[200px]"
                 >
-                  <Card onClick={() => handleSelectCompany(company)} >
-              <div className="flex items-start justify-between mb-6">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-2xl bg-primary/5 dark:bg-primary/5 border border-primary/10 flex items-center justify-center overflow-hidden">
-                    {company.logo ? (
-                      <img src={company.logo} alt={company.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <Building2 className="text-primary" size={24} />
+                  <Card>
+                    <div className="flex items-center justify-between mb-6">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-primary/5 dark:bg-primary/5 border border-primary/10 flex items-center justify-center overflow-hidden">
+                          {company.logo ? (
+                            <img src={company.logo} alt={company.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <Building2 className="text-primary" size={24} />
+                          )}
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-lg text-foreground">{company.name}</h4>
+                          <p className="text-xs text-muted-foreground font-medium">{companyBranches.length} Filiais</p>
+                        </div>
+                      </div>
+                      {isAdmin && (
+                        <div className="flex items-center">
+                          <button onClick={(e) => { e.stopPropagation(); handleEditCompany(company); }} className="p-2 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary transition-all">
+                            <Edit2 size={14} />
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); handleDeleteCompany(company); }} className="p-2 rounded-lg hover:bg-rose-500/10 text-muted-foreground hover:text-rose-500 transition-all">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-3">
+                      {companyBranches.map(branch => (
+                        <div key={branch.id} className="flex items-center justify-between p-3 rounded-xl bg-primary/5 dark:bg-primary/10 border border-primary/10">
+                          <span className="font-bold text-sm text-foreground">{branch.name}</span>
+                          <span className="font-bold text-sm text-primary">{formatCurrency(branch.balance || 0)}</span>
+                        </div>
+                      ))}
+                      {companyBranches.length === 0 && (
+                        <p className="text-xs text-muted-foreground text-center py-2">Nenhuma filial com acesso.</p>
+                      )}
+                    </div>
+
+                    {isAdmin && (
+                      <div className="pt-4 mt-4 border-t border-border flex justify-end">
+                        <button 
+                          onClick={() => handleSelectCompany(company)}
+                          className="text-primary text-xs font-bold flex items-center gap-1 hover:underline"
+                        >
+                          Gerenciar Filiais <ArrowRight size={14} />
+                        </button>
+                      </div>
                     )}
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-lg text-foreground">{company.name}</h4>
-                    <p className="text-xs text-muted-foreground font-medium">Cadastrada em {company.created_at ? new Date(company.created_at).toLocaleDateString() : '-'}</p>
-                  </div>
-                </div>
-                <Badge variant="success">Ativa</Badge>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-primary/5 dark:bg-primary/10 border border-primary/10">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Budget Mensal</p>
-                  <p className="font-bold text-sm text-foreground">{formatCurrency(company.monthly_budget)}</p>
-                </div>
-                <div className="p-3 rounded-xl bg-primary/5 dark:bg-primary/10 border border-primary/10">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Filiais</p>
-                  <p className="font-bold text-sm text-foreground">{(branches || []).filter(b => b && b.company_id === company.id).length}</p>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-4 border-t border-border">
-  
-                <button className="text-primary text-xs font-bold flex items-center gap-1 hover:underline">
-                  Gerenciar <ArrowRight size={14} />
-                </button>
-                <div className="flex items-center">
-                  <button onClick={(e) => { e.stopPropagation(); handleEditCompany(company); }} className="p-2 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary transition-all">
-                    <Edit2 size={14} />
-                  </button>
-                  <button onClick={(e) => { e.stopPropagation(); handleDeleteCompany(company); }} className="p-2 rounded-lg hover:bg-rose-500/10 text-muted-foreground hover:text-rose-500 transition-all">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
                   </Card>
                 </motion.div>
               )}
             </InView>
-          )) : (
-            <div className="col-span-full text-center py-12">
-              <Building2 className="mx-auto text-muted-foreground/20 mb-4" size={48} />
-              <p className="text-muted-foreground font-bold uppercase tracking-widest">Nenhuma empresa encontrada</p>
-            </div>
-          )}
-        </div>
-      )}
+          );
+        }) : (
+          <div className="col-span-full text-center py-12">
+            <Building2 className="mx-auto text-muted-foreground/20 mb-4" size={48} />
+            <p className="text-muted-foreground font-bold uppercase tracking-widest">Nenhuma empresa encontrada</p>
+          </div>
+        )}
+      </div>
 
+      {isAdmin && (
         <button 
           onClick={() => setIsAddModalOpen(true)}
           className="border-2 border-dashed border-border rounded-[2rem] p-6 flex flex-col items-center justify-center gap-3 text-muted-foreground hover:border-primary/40 hover:text-primary transition-all group min-h-[200px] bg-primary/5 dark:bg-primary/5"
@@ -1400,8 +1308,9 @@ export default function App() {
           </div>
           <span className="font-bold text-sm uppercase tracking-widest">Adicionar Empresa</span>
         </button>
-      </div>
-    );
+      )}
+    </div>
+  );
 
   // Branches, campaigns, and sales are now fetched globally in TrafficFlowContext.
 
