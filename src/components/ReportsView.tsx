@@ -805,22 +805,26 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
                     key={branch.id}
                     branchName={branch.name}
                     animateBorder={true}
-                    onClick={() => {
-                      if (selectedBranchIds.includes(branch.id)) {
-                        setSelectedBranchIds(prev => prev.filter(id => id !== branch.id));
-                      } else {
-                        setSelectedBranchIds(prev => [...prev, branch.id]);
-                      }
-                    }}
+                    onClick={() => handleOpenReportModal(branch)}
                     className={cn(
                       "h-auto min-h-[250px] sm:aspect-square relative z-20 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.05] hover:z-50",
                       isSelected ? "ring-2 ring-primary border-primary scale-[1.02]" : ""
                     )}
                   >
-                    <div className="absolute top-2 right-2 z-20">
+                    <div
+                      className="absolute top-2 right-2 z-30 cursor-pointer p-2 -m-2"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (selectedBranchIds.includes(branch.id)) {
+                          setSelectedBranchIds(prev => prev.filter(id => id !== branch.id));
+                        } else {
+                          setSelectedBranchIds(prev => [...prev, branch.id]);
+                        }
+                      }}
+                    >
                       <div className={cn(
                         "w-5 h-5 rounded-md border flex items-center justify-center transition-all",
-                        isSelected ? "bg-primary border-primary text-black" : "bg-surface border-border"
+                        isSelected ? "bg-primary border-primary text-black" : "bg-surface border-border hover:border-primary/50"
                       )}>
                         {isSelected && <TrendingUp size={12} strokeWidth={4} />}
                       </div>
@@ -907,7 +911,7 @@ export const ReportsView = ({ branches, companies, campaigns, branchesPerPage: b
                         className="mt-auto w-full py-3 sm:py-2.5 rounded-xl bg-primary/10 text-primary font-bold text-xs uppercase tracking-widest hover:bg-primary hover:text-black transition-all flex items-center justify-center gap-2 active:scale-95"
                       >
                         <FileText size={16} />
-                        Gerar Relatório
+                        Abrir Relatório
                       </button>
                     </div>
                   </HighlightCard>

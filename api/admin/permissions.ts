@@ -26,7 +26,7 @@ export default async function handler(req: any, res: any) {
     const token = authHeader.replace('Bearer ', '');
     const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
     if (authError || !user) return res.status(401).json({ error: 'Unauthorized' });
-    
+
     const { data: profile } = await supabaseAdmin.from('users').select('role').eq('id', user.id).single();
     if (profile?.role !== 'admin' && user.email !== 'brtreino@gmail.com') {
       return res.status(403).json({ error: 'Forbidden' });
@@ -36,8 +36,8 @@ export default async function handler(req: any, res: any) {
       const { data, error } = await supabaseAdmin.from('user_branch_permissions').select('*');
       if (error) throw error;
       return res.json(data || []);
-    } 
-    
+    }
+
     else if (req.method === 'POST') {
       const { user_id, branch_id, permission_level, granular_permissions } = req.body;
       if (permission_level === 'none') {
@@ -51,15 +51,15 @@ export default async function handler(req: any, res: any) {
       }
       const { data, error } = await supabaseAdmin
         .from('user_branch_permissions')
-        .upsert({ 
-          user_id, 
-          branch_id, 
-          permission_level: permission_level || 'viewer', 
-          granular_permissions: granular_permissions || {} 
+        .upsert({
+          user_id,
+          branch_id,
+          permission_level: permission_level || 'view',
+          granular_permissions: granular_permissions || {}
         }, { onConflict: 'user_id,branch_id' })
         .select()
         .single();
-        
+
       if (error) throw error;
       return res.json(data);
     } else if (req.method === 'DELETE') {
@@ -73,7 +73,7 @@ export default async function handler(req: any, res: any) {
       if (error) throw error;
       return res.json({ success: true });
     }
-    
+
     return res.status(405).json({ error: 'Method not allowed' });
 
   } catch (err: any) {

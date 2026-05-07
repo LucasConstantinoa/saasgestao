@@ -42,7 +42,7 @@ export const UsersView = () => {
           return res.json();
         })
       ]);
-      
+
       setUsers(Array.isArray(usersRes) ? usersRes : []);
       setPermissions(Array.isArray(permsRes) ? permsRes : []);
     } catch (error) {
@@ -60,7 +60,7 @@ export const UsersView = () => {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
       body: JSON.stringify({ email, password, role: 'user' })
     });
-    
+
     if (res.ok) {
       const newUser = await res.json();
       // Apply permissions
@@ -82,33 +82,45 @@ export const UsersView = () => {
   };
 
   const handlePermissionChange = async (user_id: string, branch_id: number, permission_level: string, granular?: any) => {
-    // Optimistic UI update
-    setPermissions(prev => {
-      const existing = prev.find(p => p.user_id === user_id && p.branch_id === branch_id);
-      if (permission_level === 'none') {
-        return prev.filter(p => !(p.user_id === user_id && p.branch_id === branch_id));
-      }
-      if (existing) {
-        return prev.map(p => p.user_id === user_id && p.branch_id === branch_id 
-          ? { ...p, permission_level, granular_permissions: granular } 
-          : p);
-      } else {
-        return [...prev, { user_id, branch_id, permission_level, granular_permissions: granular }];
-      }
-    });
+    try {
+      // Optimistic UI update
+      setPermissions(prev => {
+        const existing = prev.find(p => p.user_id === user_id && p.branch_id === branch_id);
+        if (permission_level === 'none') {
+          return prev.filter(p => !(p.user_id === user_id && p.branch_id === branch_id));
+        }
+        if (existing) {
+          return prev.map(p => p.user_id === user_id && p.branch_id === branch_id
+            ? { ...p, permission_level, granular_permissions: granular }
+            : p);
+        } else {
+          return [...prev, { user_id, branch_id, permission_level, granular_permissions: granular }];
+        }
+      });
 
-    const { data: { session } } = await supabase.auth.getSession();
-    await fetch('/api/admin/permissions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-      body: JSON.stringify({ user_id, branch_id, permission_level, granular_permissions: granular })
-    });
-    await fetchData(); // Ensure refresh completes
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/api/admin/permissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ user_id, branch_id, permission_level, granular_permissions: granular })
+      });
+
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
+
+      addToast('success', 'Permissão atualizada', 'A permissão foi salva com sucesso no banco de dados.');
+      await fetchData(); // Ensure refresh completes
+    } catch (error: any) {
+      console.error('Error changing permission:', error);
+      addToast('error', 'Erro ao atualizar', `Não foi possível salvar a permissão: ${error.message || 'Erro desconhecido'}`);
+      await fetchData(); // Revert from server
+    }
   };
 
   const handleDeleteUser = async (userId: string) => {
     if (!window.confirm('Tem certeza que deseja excluir este usuário? Esta ação não pode ser desfeita.')) return;
-    
+
     setLoading(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -116,7 +128,7 @@ export const UsersView = () => {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${session?.access_token}` }
       });
-      
+
       if (res.ok) {
         addToast('success', 'Usuário excluído', 'O usuário foi removido com sucesso.');
         setIsModalOpen(false);
@@ -137,7 +149,7 @@ export const UsersView = () => {
   };
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       className="max-w-6xl mx-auto space-y-8"
@@ -150,13 +162,13 @@ export const UsersView = () => {
         </div>
       </div>
 
-      <UserSelector 
-        users={users} 
-        onSelectUser={openSettingsModal} 
-        onCreateUser={() => setIsCreateModalOpen(true)} 
+      <UserSelector
+        users={users}
+        onSelectUser={openSettingsModal}
+        onCreateUser={() => setIsCreateModalOpen(true)}
       />
 
-      <UserSettingsModal 
+      <UserSettingsModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         user={selectedUser}
@@ -166,7 +178,7 @@ export const UsersView = () => {
         onPermissionChange={handlePermissionChange}
         onDeleteUser={handleDeleteUser}
       />
-      
+
       <AnimatePresence>
         {isCreateModalOpen && (
           <motion.div
@@ -177,7 +189,7 @@ export const UsersView = () => {
           />
         )}
       </AnimatePresence>
-      
+
       <CreateUserModal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
